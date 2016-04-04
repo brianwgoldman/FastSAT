@@ -1,0 +1,14 @@
+.project
+.cproject
+.settings
+.pydevproject
+gmon.out
+
+*.o
+*.d
+Debug/run
+Release/run
+
+__pycache__
+*.pyc
+*~

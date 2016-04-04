@@ -1,0 +1,31 @@
+Knowledge:
+  Stores if UNSAT known
+  Stores if SAT known
+  Stores known assignments to variables
+  Stores known 2-consistencies
+  Function to add assignment which updates 2-consistencies
+  Function to add 2-consistencies which updates 2-consistencies
+  Can merge with other Knowledge
+
+DNF:
+  Stores the list of variables in a function
+  Stores the assignments that result in this function being true
+  Can use Knowledge to modify self
+  Can create Knowledge by examining self
+  <Implementation>
+  Store variables in vector
+  Store assignments as rows of assignments, where the column indicates what variable
+  To remove a variable, for each row swap column to end and pop
+  To remove assignment, swap row to end and pop
+
+Problem:
+  Stores the collection of DNFs in the problem
+  Stores global Knoweldge
+  Stores variable-to-DNF mapping
+  Stores which DNFs have been modified since last assume-and-learn
+  <Implementation>
+  vector<shared_ptr<DNF>> is the current problem
+  variable-to-DNF is vector<weak_ptr<DNF>>
+  Any set of DNFs that need to be processed can be unordered_set<weak_ptr<DNF>>
+  
+  
