@@ -11,6 +11,10 @@ using std::endl;
 using std::find;
 
 void DNF::print(std::ostream& out) const {
+  if (variables.size() == 0) {
+    out << "(Empty DNF)" << endl;
+    return;
+  }
   for (const auto var : variables) {
     out << var << " ";
   }
@@ -70,10 +74,12 @@ Knowledge DNF::create_knowledge() const {
   return knowledge;
 }
 
-void DNF::apply_knowledge(const Knowledge& knowledge) {
+bool DNF::apply_knowledge(const Knowledge& knowledge) {
+  bool change_made = false;
   for (size_t i=0; i < variables.size(); i++) {
     auto assigned_it = knowledge.assigned.find(variables[i]);
     if (assigned_it != knowledge.assigned.end()) {
+      change_made = true;
       // Filter
       for (size_t r=0; r < table.size(); r++) {
         if (table[r][i] != assigned_it->second) {
@@ -88,6 +94,7 @@ void DNF::apply_knowledge(const Knowledge& knowledge) {
     }
     auto rewrite_it = knowledge.rewrites.find(variables[i]);
     if (rewrite_it != knowledge.rewrites.end()) {
+      change_made = true;
       auto to_it = find(variables.begin(), variables.end(), rewrite_it->second.to);
       if (to_it != variables.end()) {
         // This table includes both parts of a two consistency, so we need to filter
@@ -117,9 +124,11 @@ void DNF::apply_knowledge(const Knowledge& knowledge) {
       }
     }
   }
+  return change_made;
 }
 
 void DNF::remove_column(size_t col) {
+  assert(col < variables.size());
   // Remove the column header
   std::swap(variables[col], variables.back());
   variables.pop_back();

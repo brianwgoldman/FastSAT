@@ -27,6 +27,15 @@ void Problem::load(const string& filename) {
   } else {
     throw std::invalid_argument("Bad problem file extension: '" + extension + "'");
   }
+
+  // Build variable-to-dnf mapping
+  variable_to_dnfs.resize(total_variables + 1);
+  for (const auto& dnf : dnfs) {
+    for (const auto var : dnf->get_variables()) {
+      variable_to_dnfs.at(var).push_back(dnf);
+    }
+  }
+  requires_assume_and_learn.insert(dnfs.begin(), dnfs.end());
 }
 
 void Problem::load_dnf(const string& filename) {
@@ -85,7 +94,7 @@ void Problem::load_dnf(const string& filename) {
       // The number of variables should be equal to the columns in the table
       assert(variables.size() == table[0].size());
 
-      dnfs.push_back(std::make_shared<DNF>(variables, table));
+      dnfs.insert(std::make_shared<DNF>(variables, table));
     }
   }
   assert(total_dnfs == dnfs.size());
@@ -94,5 +103,152 @@ void Problem::load_dnf(const string& filename) {
 void Problem::print(std::ostream& out) const {
   for (const auto& dnf : dnfs) {
     dnf->print(out);
+  }
+}
+
+void Problem::insert_overlap(const Knowledge& knowledge, weak_dnf_set& open_set) const {
+  // Add all dnfs that overlap an assignment to the open_set
+  for (const auto& pair : knowledge.assigned) {
+    auto& overlapping_dnfs = variable_to_dnfs[pair.first];
+    open_set.insert(overlapping_dnfs.begin(), overlapping_dnfs.end());
+  }
+  // Add all dnfs that overlap a 2-consistency to the open_set
+  for (const auto& pair : knowledge.rewrites) {
+    auto& overlapping_dnfs = variable_to_dnfs[pair.first];
+    open_set.insert(overlapping_dnfs.begin(), overlapping_dnfs.end());
+  }
+}
+
+Knowledge Problem::knowledge_propagate() {
+  weak_dnf_set open_set(dnfs.begin(), dnfs.end());
+  Knowledge empty;
+  return knowledge_propagate(empty, open_set, true);
+}
+
+Knowledge Problem::knowledge_propagate(const Knowledge& knowledge, bool modify_in_place) {
+  weak_dnf_set open_set;
+  insert_overlap(knowledge, open_set);
+  return knowledge_propagate(knowledge, open_set, modify_in_place);
+}
+Knowledge Problem::knowledge_propagate(const Knowledge& knowledge, weak_dnf_set & open_set, bool modify_in_place) {
+  Knowledge new_knowledge;
+  auto total_knowledge = knowledge;
+  //std::cout << "Start of propagate" << std::endl;
+  while (not open_set.empty()) {
+    // Select a "random" function from the open_set
+    auto weak_dnf = *open_set.begin();
+    // If that DNF still exists
+    if (auto realized_dnf = weak_dnf.lock()) {
+      if (not modify_in_place) {
+        realized_dnf = std::make_shared<DNF>(*realized_dnf);
+      }
+      bool change_made = false;
+      change_made |= realized_dnf->apply_knowledge(total_knowledge);
+      auto learned = realized_dnf->create_knowledge();
+      if (not learned.empty()) {
+        new_knowledge.add(learned);
+        auto require_updating = total_knowledge.add(learned);
+        if (require_updating.count(2)) {
+          //std::cout << "Update required for 2!" << std::endl;
+        }
+        if (total_knowledge.is_unsat) {
+          // Do not go further, just return what made you UNSAT
+          new_knowledge.is_unsat = true;
+          return new_knowledge;
+        }
+        // Open up affected DNFs
+        //insert_overlap(learned, open_set);
+        change_made |= realized_dnf->apply_knowledge(total_knowledge);
+        for (const auto v : require_updating) {
+          open_set.insert(variable_to_dnfs[v].begin(), variable_to_dnfs[v].end());
+        }
+      }
+      if (change_made and modify_in_place) {
+        requires_assume_and_learn.insert(weak_dnf);
+      }
+    }
+    open_set.erase(weak_dnf);
+  }
+  if (modify_in_place) {
+    bool not_before = global_knowledge.assigned.count(2) == 0 and total_knowledge.assigned.count(2) == 0;
+    global_knowledge.add(total_knowledge);
+    if (not_before and global_knowledge.assigned.count(2) == 1) {
+      std::cout << "HERE IT IS" << std::endl;
+      throw "STOP";
+    }
+  }
+  //std::cout << "End of propagate" << std::endl;
+  return new_knowledge;
+}
+using std::cout;
+using std::endl;
+
+void Problem::assume_and_learn() {
+  requires_assume_and_learn.insert(dnfs.begin(), dnfs.end());
+  while (not requires_assume_and_learn.empty()) {
+    vector<std::weak_ptr<DNF>> open_list(requires_assume_and_learn.begin(), requires_assume_and_learn.end());
+    std::cout << "Top of assume-and-learn with " << open_list.size() << " in open_list" << std::endl;
+    requires_assume_and_learn.clear();
+    while (not open_list.empty()) {
+      // Select a "random" function from the set
+      auto weak_dnf = open_list.back();
+      open_list.pop_back();
+      if (auto realized_dnf = weak_dnf.lock()) {
+        const auto& variables = realized_dnf->get_variables();
+        auto& table = realized_dnf->table;
+        bool row_removed = false;
+        for (size_t r=0; r < table.size(); r++) {
+          // Assume this row is true
+          Knowledge assumption;
+          for (size_t i=0; i < variables.size(); i++) {
+            assumption.add(variables[i], table[r][i]);
+          }
+
+          auto learned = knowledge_propagate(assumption, false);
+          if (learned.is_unsat) {
+            std::cout << "Deleting row" << std::endl;
+            swap(table[r], table.back());
+            table.pop_back();
+            r--;
+            row_removed = true;
+          }
+        }
+        if (row_removed) {
+          // Anything that overlaps this DNF could now potentially have a row removed
+          for (const auto& v : variables) {
+            requires_assume_and_learn.insert(variable_to_dnfs[v].begin(), variable_to_dnfs[v].end());
+          }
+          auto learned = realized_dnf->create_knowledge();
+          if (not learned.empty()) {
+            std::cout << "Learned something new" << std::endl;
+            learned.print();
+            std::cout << std::endl;
+            bool not_before = global_knowledge.assigned.count(2) == 0 and learned.assigned.count(2) == 0 ;
+            if (learned.assigned.count(2) == 1 and global_knowledge.assigned.count(2) == 0) {
+              std::cout << "You learned it from removing rows" << std::endl;
+              //throw "STOP'";
+            }
+            auto require_update = global_knowledge.add(learned);
+            if (not_before and global_knowledge.assigned.count(2) == 1) {
+              std::cout << "It happened!" << std::endl;
+              throw "STOP";
+            }
+            weak_dnf_set open_set;
+            for (const auto v : require_update) {
+              open_set.insert(variable_to_dnfs[v].begin(), variable_to_dnfs[v].end());
+            }
+            auto result = knowledge_propagate(global_knowledge, open_set, true);
+            std::cout << "Propagated" << std::endl;
+            result.print();
+            std::cout << "Total in Global: " << global_knowledge.assigned.size() + global_knowledge.rewrites.size() << std::endl;
+            std::cout << std::endl;
+            if (global_knowledge.is_unsat) {
+              return;
+            }
+          }
+        }
+      }
+      requires_assume_and_learn.erase(weak_dnf);
+    }
   }
 }

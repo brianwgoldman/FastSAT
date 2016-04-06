@@ -9,7 +9,10 @@
 #include <cassert>
 using std::endl;
 
-void Knowledge::add(const size_t variable, const bool value) {
+unordered_set<size_t> Knowledge::add(const size_t variable, const bool value) {
+  if (variable == 2) {
+    //std::cout << "Adding knowledge about 2!" << std::endl;
+  }
   auto rewrite_it = rewrites.find(variable);
   // If "variable" is currently being rewriten to something else
   // step forward to it and recurse
@@ -20,8 +23,7 @@ void Knowledge::add(const size_t variable, const bool value) {
       new_value = not new_value;
     }
     // recurse
-    add(new_variable, new_value);
-    return;
+    return add(new_variable, new_value);
   }
   // Build up the list of everything that can be assigned using this knowledge
   std::vector<std::pair<size_t, bool>> new_assignments;
@@ -44,32 +46,37 @@ void Knowledge::add(const size_t variable, const bool value) {
     // Delete the sources for this rule
     sources.erase(it);
   }
+  unordered_set<size_t> updated;
   // Integrate assignments, check for UNSAT
   for (const auto assignment : new_assignments) {
     auto result = assigned.insert(assignment);
     if (not result.second) {
+      // If you have seen this assignment before
       if (result.first->second != assignment.second) {
         is_unsat = true;
       }
+    } else {
+      updated.insert(assignment.first);
     }
   }
+  return updated;
 }
 
-void Knowledge::add(const TwoConsistency& rewrite) {
+unordered_set<size_t> Knowledge::add(const TwoConsistency& rewrite) {
   if (assigned.count(rewrite.from)) {
     // "from" is already assigned, so assign "to" as well
     auto value = assigned[rewrite.from];
     if (rewrite.negated) {
       value = not value;
     }
-    add(rewrite.to, value);
+    return add(rewrite.to, value);
   } else if (assigned.count(rewrite.to)) {
     // "to" is already assigned, so assign "from" as well
     auto value = assigned[rewrite.to];
     if (rewrite.negated) {
       value = not value;
     }
-    add(rewrite.from, value);
+    return add(rewrite.from, value);
   } else if (rewrites.count(rewrite.from)) {
     // This rule is trying to rewrite the same variable as another rule
     auto & overlap = rewrites[rewrite.from];
@@ -79,17 +86,18 @@ void Knowledge::add(const TwoConsistency& rewrite) {
       // We want to use the original's "to"
       TwoConsistency updated(rewrite.to, overlap.to, new_negated);
       // Recurse on the new rule
-      add(updated);
+      return add(updated);
     } else if (overlap.to > rewrite.to) {
       // We want to use the new rule's "to"
       TwoConsistency updated(overlap.to, rewrite.to, new_negated);
       // Recurse on the new rule
-      add(updated);
+      return add(updated);
     } else {
       assert(rewrite.to == overlap.to and rewrite.from == overlap.from);
       if (rewrite.negated != overlap.negated) {
         is_unsat = true;
       }
+      return {};
     }
   } else if (rewrites.count(rewrite.to)) {
     // This rule writes to something that itself has a rewrite
@@ -99,11 +107,13 @@ void Knowledge::add(const TwoConsistency& rewrite) {
     // advance the "to"
     updated.to = overlap.to;
     if (overlap.negated) {
-      updated.negated = not overlap.negated;
+      updated.negated = not updated.negated;
     }
     rewrites[updated.from] = updated;
     sources[updated.to].push_back(updated.from);
+    return {updated.from};
   } else {
+    unordered_set<size_t> has_been_updated;
     // All other cases can be safely handled by this
     // Rules that currently rewrite to "from" (if any), now need to write to "to"
     for (const auto upstream : sources[rewrite.from]) {
@@ -114,24 +124,32 @@ void Knowledge::add(const TwoConsistency& rewrite) {
         up.negated = not up.negated;
       }
       sources[rewrite.to].push_back(upstream);
+      // TODO figure out if this is actually needed
+      has_been_updated.insert(up.from);
     }
     // "from" is no longer downstream of anything
     sources.erase(rewrite.from);
     // Add the new rule itself
     rewrites[rewrite.from] = rewrite;
     sources[rewrite.to].push_back(rewrite.from);
+    has_been_updated.insert(rewrite.from);
+    return has_been_updated;
   }
 }
 
-void Knowledge::add(const Knowledge& knowledge) {
+unordered_set<size_t> Knowledge::add(const Knowledge& knowledge) {
   is_sat |= knowledge.is_sat;
   is_unsat |= knowledge.is_unsat;
+  unordered_set<size_t> has_been_updated;
   for (const auto & assignment : knowledge.assigned) {
-    add(assignment.first, assignment.second);
+    auto result = add(assignment.first, assignment.second);
+    has_been_updated.insert(result.begin(), result.end());
   }
   for (const auto & rewrite : knowledge.rewrites) {
-    add(rewrite.second);
+    auto result = add(rewrite.second);
+    has_been_updated.insert(result.begin(), result.end());
   }
+  return has_been_updated;
 }
 
 void Knowledge::print(std::ostream& out) const {
@@ -152,9 +170,9 @@ void Knowledge::print(std::ostream& out) const {
 }
 
 void TwoConsistency::print(std::ostream& out) const {
-  out << "From: " << from << " to: " << to;
+  out << from;
   if (negated) {
-    out << " negated";
+    out << "!";
   }
-  out << endl;
+  out << "=" << to << endl;
 }

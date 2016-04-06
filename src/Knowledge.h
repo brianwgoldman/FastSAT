@@ -9,8 +9,11 @@
 #define KNOWLEDGE_H_
 #include <unordered_map>
 #include <vector>
+using std::vector;
 #include <cassert>
 #include <iostream>
+#include <unordered_set>
+using std::unordered_set;
 
 struct TwoConsistency {
   size_t from, to;
@@ -31,9 +34,9 @@ class Knowledge {
   std::unordered_map<size_t, TwoConsistency> rewrites;
   // Used to quickly update rewrites when new knowledge is added
   std::unordered_map<size_t, std::vector<size_t>> sources;
-  void add(const size_t variable, const bool value);
-  void add(const TwoConsistency& rewrite);
-  void add(const Knowledge& knowledge);
+  unordered_set<size_t> add(const size_t variable, const bool value);
+  unordered_set<size_t> add(const TwoConsistency& rewrite);
+  unordered_set<size_t> add(const Knowledge& knowledge);
   bool empty() const {
     return (not is_sat) and (not is_unsat) and assigned.empty() and rewrites.empty();
   }
@@ -45,6 +48,10 @@ class Knowledge {
 #include <algorithm>
 template <class T, class U>
 void print_map(const std::unordered_map<T, U> & m, std::ostream& out) {
+  if (m.empty()) {
+    out << "(Empty)" << std::endl;
+    return;
+  }
   std::vector<T> keys;
   for (const auto pair : m) {
     keys.push_back(pair.first);

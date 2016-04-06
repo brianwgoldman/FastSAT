@@ -24,7 +24,13 @@ class DNF {
   virtual ~DNF() = default;
   void print(std::ostream& out=std::cout) const;
   Knowledge create_knowledge() const;
-  void apply_knowledge(const Knowledge& knowledge);
+  bool apply_knowledge(const Knowledge& knowledge);
+  const vector<size_t>& get_variables() {
+    return variables;
+  }
+  const vector<vector<bool>>& get_table() {
+    return table;
+  }
  //private:
   vector<size_t> variables;
   vector<vector<bool>> table;
