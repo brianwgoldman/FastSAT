@@ -101,6 +101,10 @@ void Problem::load_dnf(const string& filename) {
 }
 
 void Problem::print(std::ostream& out) const {
+  if (dnfs.empty()) {
+    out << "(Empy Problem)" << std::endl;
+    return;
+  }
   for (const auto& dnf : dnfs) {
     dnf->print(out);
   }
@@ -160,6 +164,10 @@ Knowledge Problem::knowledge_propagate(const Knowledge& knowledge, weak_dnf_set 
         }
       }
       if (change_made and modify_in_place) {
+        for (const auto& v : realized_dnf->previously_used_variables) {
+          variable_to_dnfs[v].erase(weak_dnf);
+        }
+        realized_dnf->previously_used_variables.clear();
         // check to see if this function is now always SAT
         size_t maximum_rows = 1 << realized_dnf->variables.size();
         if (realized_dnf->variables.size() == 0 or realized_dnf->table.size() == maximum_rows) {
@@ -169,6 +177,8 @@ Knowledge Problem::knowledge_propagate(const Knowledge& knowledge, weak_dnf_set 
           requires_assume_and_learn.insert(weak_dnf);
         }
       }
+    } else {
+      std::cout << "LOCK GET FAILED in knowledge propagate." << std::endl;
     }
     open_set.erase(weak_dnf);
   }
@@ -184,8 +194,13 @@ void Problem::remove_dnf(std::weak_ptr<DNF>& weak_dnf) {
     for (const auto v : realized_dnf->variables) {
       variable_to_dnfs[v].erase(weak_dnf);
     }
+    for (const auto& v : realized_dnf->previously_used_variables) {
+      variable_to_dnfs[v].erase(weak_dnf);
+    }
     requires_assume_and_learn.erase(weak_dnf);
     dnfs.erase(realized_dnf);
+  } else {
+    std::cout << "LOCK GET FAILED in remove_dnf" << std::endl;
   }
 }
 
@@ -209,57 +224,52 @@ unordered_set<size_t> Problem::add_knowledge(const Knowledge& knowledge) {
 void Problem::assume_and_learn() {
   requires_assume_and_learn.insert(dnfs.begin(), dnfs.end());
   while (not requires_assume_and_learn.empty()) {
-    vector<std::weak_ptr<DNF>> open_list(requires_assume_and_learn.begin(), requires_assume_and_learn.end());
-    std::cout << "Top of assume-and-learn with " << open_list.size() << " in open_list" << std::endl;
-    requires_assume_and_learn.clear();
-    while (not open_list.empty()) {
-      // Select a "random" function from the set
-      auto weak_dnf = open_list.back();
-      open_list.pop_back();
-      if (auto realized_dnf = weak_dnf.lock()) {
-        const auto& variables = realized_dnf->get_variables();
-        auto& table = realized_dnf->table;
-        bool row_removed = false;
-        for (size_t r=0; r < table.size(); r++) {
-          // Assume this row is true
-          Knowledge assumption;
-          for (size_t i=0; i < variables.size(); i++) {
-            assumption.add(variables[i], table[r][i]);
-          }
+    // Select a "random" function from the set
+    auto weak_dnf = *requires_assume_and_learn.begin();
+    if (auto realized_dnf = weak_dnf.lock()) {
+      const auto& variables = realized_dnf->get_variables();
+      auto& table = realized_dnf->table;
+      bool row_removed = false;
+      for (size_t r=0; r < table.size(); r++) {
+        // Assume this row is true
+        Knowledge assumption;
 
-          auto learned = knowledge_propagate(assumption, false);
-          if (learned.is_unsat) {
-            std::cout << "Deleting row" << std::endl;
-            swap(table[r], table.back());
-            table.pop_back();
-            r--;
-            row_removed = true;
-          }
+        for (size_t i=0; i < variables.size(); i++) {
+          assumption.add(variables[i], table[r][i]);
         }
-        if (row_removed) {
-          // Anything that overlaps this DNF could now potentially have a row removed
-          for (const auto& v : variables) {
-            requires_assume_and_learn.insert(variable_to_dnfs[v].begin(), variable_to_dnfs[v].end());
-          }
-          auto learned = realized_dnf->create_knowledge();
-          if (not learned.empty()) {
-            std::cout << "Learned something new" << std::endl;
-            learned.print();
-            std::cout << std::endl;
-            // TODO you may need to use "updates_required" trick for global+learned
-            auto result = knowledge_propagate(learned, true);
-            std::cout << "Propagated" << std::endl;
-            result.print();
+        auto learned = knowledge_propagate(assumption, false);
+        if (learned.is_unsat) {
+          swap(table[r], table.back());
+          table.pop_back();
+          r--;
+          row_removed = true;
+        }
+      }
+      if (row_removed) {
+        // Anything that overlaps this DNF could now potentially have a row removed
+        for (const auto& v : variables) {
+          requires_assume_and_learn.insert(variable_to_dnfs[v].begin(), variable_to_dnfs[v].end());
+        }
+        auto learned = realized_dnf->create_knowledge();
+        if (not learned.empty()) {
+          std::cout << "Learned something new" << std::endl;
+          learned.print();
+          std::cout << std::endl;
+          // TODO you may need to use "updates_required" trick for global+learned
+          auto result = knowledge_propagate(learned, true);
+          std::cout << "Propagated" << std::endl;
+          result.print();
 
-            std::cout << "Total in Global: " << global_knowledge.assigned.size() + global_knowledge.rewrites.size() << std::endl;
-            std::cout << std::endl;
-            if (global_knowledge.is_unsat) {
-              return;
-            }
+          std::cout << "Total in Global: " << global_knowledge.assigned.size() + global_knowledge.rewrites.size() << std::endl;
+          std::cout << std::endl;
+          if (global_knowledge.is_unsat) {
+            return;
           }
         }
       }
-      requires_assume_and_learn.erase(weak_dnf);
+    } else {
+      std::cout << "LOCK GET FAILED in assume-and-learn" << std::endl;
     }
+    requires_assume_and_learn.erase(weak_dnf);
   }
 }

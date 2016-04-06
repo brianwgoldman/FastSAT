@@ -112,6 +112,7 @@ bool DNF::apply_knowledge(const Knowledge& knowledge) {
       }
       else {
         // it only contains the "from" so no rows are removed
+        previously_used_variables.push_back(variables[i]);
         variables[i] = rewrite_it->second.to;
         if (rewrite_it->second.negated) {
           for (size_t r=0; r < table.size(); r++) {
@@ -126,6 +127,7 @@ bool DNF::apply_knowledge(const Knowledge& knowledge) {
 
 void DNF::remove_column(size_t col) {
   assert(col < variables.size());
+  previously_used_variables.push_back(variables[col]);
   // Remove the column header
   std::swap(variables[col], variables.back());
   variables.pop_back();

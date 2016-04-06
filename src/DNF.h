@@ -34,6 +34,7 @@ class DNF {
  //private:
   vector<size_t> variables;
   vector<vector<bool>> table;
+  vector<size_t> previously_used_variables;
   void remove_column(size_t i);
 };
 
