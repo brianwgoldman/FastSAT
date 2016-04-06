@@ -160,7 +160,14 @@ Knowledge Problem::knowledge_propagate(const Knowledge& knowledge, weak_dnf_set 
         }
       }
       if (change_made and modify_in_place) {
-        requires_assume_and_learn.insert(weak_dnf);
+        // check to see if this function is now always SAT
+        size_t maximum_rows = 1 << realized_dnf->variables.size();
+        if (realized_dnf->variables.size() == 0 or realized_dnf->table.size() == maximum_rows) {
+          // Remove this function entirely from this problem
+          remove_dnf(weak_dnf);
+        } else {
+          requires_assume_and_learn.insert(weak_dnf);
+        }
       }
     }
     open_set.erase(weak_dnf);
@@ -169,6 +176,17 @@ Knowledge Problem::knowledge_propagate(const Knowledge& knowledge, weak_dnf_set 
     add_knowledge(total_knowledge);
   }
   return new_knowledge;
+}
+
+void Problem::remove_dnf(std::weak_ptr<DNF>& weak_dnf) {
+  if (auto realized_dnf = weak_dnf.lock()) {
+    // Remove it from variable bins
+    for (const auto v : realized_dnf->variables) {
+      variable_to_dnfs[v].erase(weak_dnf);
+    }
+    requires_assume_and_learn.erase(weak_dnf);
+    dnfs.erase(realized_dnf);
+  }
 }
 
 unordered_set<size_t> Problem::add_knowledge(const Knowledge& knowledge) {

@@ -43,6 +43,7 @@ class Problem {
   void insert_overlap(const Knowledge& knowledge, weak_dnf_set& open_set) const;
   unordered_set<size_t> add_knowledge(const Knowledge& knowledge);
   Knowledge knowledge_propagate(const Knowledge& knowledge, weak_dnf_set& open_set, bool modify_in_place);
+  void remove_dnf(std::weak_ptr<DNF>& weak_dnf);
 
   size_t total_variables;
 };

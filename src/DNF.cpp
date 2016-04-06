@@ -31,11 +31,10 @@ void DNF::print(std::ostream& out) const {
 Knowledge DNF::create_knowledge() const {
   Knowledge knowledge;
   if (table.size() == 0) {
-    if (variables.size() > 0) {
-      knowledge.is_unsat = true;
-    }
+    knowledge.is_unsat = true;
     return knowledge;
   }
+  assert(variables.size() > 0 or table.size() == 1);
   size_t total_variables = variables.size();
   for (size_t i=0; i < total_variables; i++) {
     // The bool in this pair is if the relationship is "negated"
