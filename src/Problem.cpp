@@ -32,7 +32,7 @@ void Problem::load(const string& filename) {
   variable_to_dnfs.resize(total_variables + 1);
   for (const auto& dnf : dnfs) {
     for (const auto var : dnf->get_variables()) {
-      variable_to_dnfs.at(var).push_back(dnf);
+      variable_to_dnfs.at(var).insert(dnf);
     }
   }
   requires_assume_and_learn.insert(dnfs.begin(), dnfs.end());
@@ -133,7 +133,6 @@ Knowledge Problem::knowledge_propagate(const Knowledge& knowledge, bool modify_i
 Knowledge Problem::knowledge_propagate(const Knowledge& knowledge, weak_dnf_set & open_set, bool modify_in_place) {
   Knowledge new_knowledge;
   auto total_knowledge = knowledge;
-  //std::cout << "Start of propagate" << std::endl;
   while (not open_set.empty()) {
     // Select a "random" function from the open_set
     auto weak_dnf = *open_set.begin();
@@ -148,9 +147,6 @@ Knowledge Problem::knowledge_propagate(const Knowledge& knowledge, weak_dnf_set 
       if (not learned.empty()) {
         new_knowledge.add(learned);
         auto require_updating = total_knowledge.add(learned);
-        if (require_updating.count(2)) {
-          //std::cout << "Update required for 2!" << std::endl;
-        }
         if (total_knowledge.is_unsat) {
           // Do not go further, just return what made you UNSAT
           new_knowledge.is_unsat = true;
@@ -170,18 +166,27 @@ Knowledge Problem::knowledge_propagate(const Knowledge& knowledge, weak_dnf_set 
     open_set.erase(weak_dnf);
   }
   if (modify_in_place) {
-    bool not_before = global_knowledge.assigned.count(2) == 0 and total_knowledge.assigned.count(2) == 0;
-    global_knowledge.add(total_knowledge);
-    if (not_before and global_knowledge.assigned.count(2) == 1) {
-      std::cout << "HERE IT IS" << std::endl;
-      throw "STOP";
-    }
+    add_knowledge(total_knowledge);
   }
-  //std::cout << "End of propagate" << std::endl;
   return new_knowledge;
 }
-using std::cout;
-using std::endl;
+
+unordered_set<size_t> Problem::add_knowledge(const Knowledge& knowledge) {
+  auto update_required = global_knowledge.add(knowledge);
+  // TODO if this ends up being slow, try to make it only do new knowledge
+  // that results from the joining of global and new stuff.
+  for (const auto& pair : global_knowledge.assigned) {
+    variable_to_dnfs[pair.first].clear();
+  }
+  // Move all things in the "from" bin of a rule to the "to" bin
+  for (const auto& pair : global_knowledge.rewrites) {
+    const auto& rewrite = pair.second;
+    auto& moving = variable_to_dnfs[rewrite.from];
+    variable_to_dnfs[rewrite.to].insert(moving.begin(), moving.end());
+    moving.clear();
+  }
+  return update_required;
+}
 
 void Problem::assume_and_learn() {
   requires_assume_and_learn.insert(dnfs.begin(), dnfs.end());
@@ -223,23 +228,11 @@ void Problem::assume_and_learn() {
             std::cout << "Learned something new" << std::endl;
             learned.print();
             std::cout << std::endl;
-            bool not_before = global_knowledge.assigned.count(2) == 0 and learned.assigned.count(2) == 0 ;
-            if (learned.assigned.count(2) == 1 and global_knowledge.assigned.count(2) == 0) {
-              std::cout << "You learned it from removing rows" << std::endl;
-              //throw "STOP'";
-            }
-            auto require_update = global_knowledge.add(learned);
-            if (not_before and global_knowledge.assigned.count(2) == 1) {
-              std::cout << "It happened!" << std::endl;
-              throw "STOP";
-            }
-            weak_dnf_set open_set;
-            for (const auto v : require_update) {
-              open_set.insert(variable_to_dnfs[v].begin(), variable_to_dnfs[v].end());
-            }
-            auto result = knowledge_propagate(global_knowledge, open_set, true);
+            // TODO you may need to use "updates_required" trick for global+learned
+            auto result = knowledge_propagate(learned, true);
             std::cout << "Propagated" << std::endl;
             result.print();
+
             std::cout << "Total in Global: " << global_knowledge.assigned.size() + global_knowledge.rewrites.size() << std::endl;
             std::cout << std::endl;
             if (global_knowledge.is_unsat) {

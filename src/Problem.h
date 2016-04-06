@@ -18,6 +18,8 @@
 
 using std::string;
 
+// This is a "set" and not an "unordered_set" because weak_ptr doesn't
+// have a safe, immutable hash function
 using weak_dnf_set=std::set<std::weak_ptr<DNF>,std::owner_less<std::weak_ptr<DNF>>>;
 
 // TODO remove always satisfied dfns and dnfs on zero variables.
@@ -33,14 +35,13 @@ class Problem {
 
 
   std::unordered_set<std::shared_ptr<DNF>> dnfs;
-  vector<vector<std::weak_ptr<DNF>>> variable_to_dnfs;
-  // This is a "set" and not an "unordered_set" because weak_ptr doesn't
-  // have a safe, immutable hash function
+  vector<weak_dnf_set> variable_to_dnfs;
   weak_dnf_set requires_assume_and_learn;
   Knowledge global_knowledge;
  private:
   void load_dnf(const string& filename);
   void insert_overlap(const Knowledge& knowledge, weak_dnf_set& open_set) const;
+  unordered_set<size_t> add_knowledge(const Knowledge& knowledge);
   Knowledge knowledge_propagate(const Knowledge& knowledge, weak_dnf_set& open_set, bool modify_in_place);
 
   size_t total_variables;

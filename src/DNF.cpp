@@ -76,6 +76,7 @@ Knowledge DNF::create_knowledge() const {
 
 bool DNF::apply_knowledge(const Knowledge& knowledge) {
   bool change_made = false;
+
   for (size_t i=0; i < variables.size(); i++) {
     auto assigned_it = knowledge.assigned.find(variables[i]);
     if (assigned_it != knowledge.assigned.end()) {
@@ -102,9 +103,6 @@ bool DNF::apply_knowledge(const Knowledge& knowledge) {
         for (size_t r=0; r < table.size(); r++) {
           auto negated = table[r][i] != table[r][to_index];
           if (negated != rewrite_it->second.negated) {
-            std::cout << "Removing row due to conflict with rewrite" << endl;
-            rewrite_it->second.print();
-            std::cout << "To_index: " << to_index << std::endl;
             swap(table[r], table.back());
             table.pop_back();
             r--;

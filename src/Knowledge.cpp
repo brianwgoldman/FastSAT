@@ -10,9 +10,6 @@
 using std::endl;
 
 unordered_set<size_t> Knowledge::add(const size_t variable, const bool value) {
-  if (variable == 2) {
-    //std::cout << "Adding knowledge about 2!" << std::endl;
-  }
   auto rewrite_it = rewrites.find(variable);
   // If "variable" is currently being rewriten to something else
   // step forward to it and recurse
