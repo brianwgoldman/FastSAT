@@ -111,6 +111,7 @@ bool DNF::apply_knowledge(const Knowledge& knowledge) {
         i--;
       }
       else {
+        assert(variables[i] != rewrite_it->second.to);
         // it only contains the "from" so no rows are removed
         previously_used_variables.push_back(variables[i]);
         variables[i] = rewrite_it->second.to;

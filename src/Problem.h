@@ -22,7 +22,6 @@ using std::string;
 // have a safe, immutable hash function
 using weak_dnf_set=std::set<std::weak_ptr<DNF>,std::owner_less<std::weak_ptr<DNF>>>;
 
-// TODO remove always satisfied dfns and dnfs on zero variables.
 class Problem {
  public:
   void load(const string& filename);
