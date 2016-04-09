@@ -9,6 +9,8 @@
 using std::endl;
 #include <algorithm>
 using std::find;
+#include <unordered_map>
+using std::unordered_map;
 
 void DNF::print(std::ostream& out) const {
   if (variables.size() == 0) {
@@ -137,4 +139,55 @@ void DNF::remove_column(size_t col) {
     swap(row[col], row.back());
     row.pop_back();
   }
+}
+
+vector<bool> extract_key(const vector<size_t>& variables_in_key, const unordered_map<size_t, size_t>& var_to_col, const vector<bool>& row) {
+  vector<bool> key;
+  for (const auto v : variables_in_key) {
+    key.push_back(row[var_to_col.at(v)]);
+  }
+  return key;
+}
+
+DNF DNF::merge(const DNF& a, const DNF& b) {
+  // Construct variable to column mappings for both functions
+  unordered_map<size_t, size_t> var_to_col_a, var_to_col_b;
+  for (size_t i=0; i < a.variables.size(); i++) {
+    var_to_col_a[a.variables[i]] = i;
+  }
+  for (size_t i=0; i < b.variables.size(); i++) {
+    var_to_col_b[b.variables[i]] = i;
+  }
+
+  // Find the set of shared variables
+  vector<size_t> shared_var;
+  vector<size_t> b_only_var;
+  for (const auto v : b.variables) {
+    if (var_to_col_a.count(v) == 1) {
+      shared_var.push_back(v);
+    } else {
+      // Only in b
+      b_only_var.push_back(v);
+    }
+  }
+  std::unordered_map<vector<bool>, vector<vector<bool>>> key_to_a_rows;
+  for (const auto row : a.table) {
+    auto key = extract_key(shared_var, var_to_col_a, row);
+    key_to_a_rows[key].push_back(row);
+  }
+  vector<vector<bool>> table;
+  for (const auto b_row : b.table) {
+    auto key = extract_key(shared_var, var_to_col_b, b_row);
+    // Iterate over mergable rows, creating copies
+    for (auto new_row : key_to_a_rows[key]) {
+      for (const auto v : b_only_var) {
+        new_row.push_back(b_row[var_to_col_b[v]]);
+      }
+      table.push_back(new_row);
+    }
+  }
+  // Create the variable headers
+  vector<size_t> variables(a.variables.begin(), a.variables.end());
+  variables.insert(variables.end(), b_only_var.begin(), b_only_var.end());
+  return DNF(variables, table);
 }

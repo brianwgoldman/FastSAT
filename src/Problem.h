@@ -31,7 +31,7 @@ class Problem {
   void propagate_assumption(Knowledge& assumption);
 
   void assume_and_learn();
-
+  void merge(std::weak_ptr<DNF>& weak_a, std::weak_ptr<DNF>& weak_b);
 
   std::unordered_set<std::shared_ptr<DNF>> dnfs;
   vector<weak_dnf_set> variable_to_dnfs;
@@ -44,10 +44,11 @@ class Problem {
   void load_dnf(const string& filename);
   void add_knowledge(const Knowledge& knowledge);
   //Knowledge knowledge_propagate(const Knowledge& knowledge, weak_dnf_set& open_set, bool modify_in_place);
+  void add_dnf(const std::shared_ptr<DNF>& dnf);
   void remove_dnf(std::weak_ptr<DNF>& weak_dnf);
   void clean_up_bins(const unordered_set<size_t>& require_updating);
 
-  void merge(std::weak_ptr<DNF>& weak_a, std::weak_ptr<DNF>& weak_b);
+  std::shared_ptr<DNF> convert(const vector<unordered_map<size_t, bool>>& rows);
   size_t total_variables;
 };
 

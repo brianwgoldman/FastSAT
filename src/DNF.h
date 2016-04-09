@@ -31,6 +31,7 @@ class DNF {
   const vector<vector<bool>>& get_table() {
     return table;
   }
+  static DNF merge(const DNF& a, const DNF& b);
  //private:
   vector<size_t> variables;
   vector<vector<bool>> table;

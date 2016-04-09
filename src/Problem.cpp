@@ -32,15 +32,6 @@ void Problem::load(const string& filename) {
     throw std::invalid_argument("Bad problem file extension: '" + extension + "'");
   }
 
-  // Build variable-to-dnf mapping
-  variable_to_dnfs.resize(total_variables + 1);
-  for (const auto& dnf : dnfs) {
-    for (const auto var : dnf->get_variables()) {
-      variable_to_dnfs.at(var).insert(dnf);
-    }
-  }
-  requires_knowledge_propagate.insert(dnfs.begin(), dnfs.end());
-  requires_assume_and_learn.insert(dnfs.begin(), dnfs.end());
   sanity_check();
 }
 
@@ -56,6 +47,7 @@ void Problem::load_dnf(const string& filename) {
   assert(word == "dnf");
   size_t total_dnfs;
   iss >> total_variables >> total_dnfs;
+  variable_to_dnfs.resize(total_variables + 1);
   // Ignore the second line
   getline(in, line);
   vector<vector<bool>> table;
@@ -99,8 +91,7 @@ void Problem::load_dnf(const string& filename) {
       }
       // The number of variables should be equal to the columns in the table
       assert(variables.size() == table[0].size());
-
-      dnfs.insert(std::make_shared<DNF>(variables, table));
+      add_dnf(std::make_shared<DNF>(variables, table));
     }
   }
   assert(total_dnfs == dnfs.size());
@@ -180,6 +171,16 @@ void Problem::knowledge_propagate(Knowledge& knowledge, bool modify_in_place) {
   sanity_check();
 }
 
+void Problem::add_dnf(const std::shared_ptr<DNF>& dnf) {
+  dnfs.insert(dnf);
+  std::weak_ptr<DNF> weak_dnf = dnf;
+  for (const auto v : dnf->variables) {
+    variable_to_dnfs[v].insert(weak_dnf);
+  }
+  requires_knowledge_propagate.insert(weak_dnf);
+  requires_assume_and_learn.insert(weak_dnf);
+}
+
 void Problem::remove_dnf(std::weak_ptr<DNF>& weak_dnf) {
   if (auto realized_dnf = weak_dnf.lock()) {
     // Remove it from variable bins
@@ -189,6 +190,7 @@ void Problem::remove_dnf(std::weak_ptr<DNF>& weak_dnf) {
     for (const auto& v : realized_dnf->previously_used_variables) {
       variable_to_dnfs[v].erase(weak_dnf);
     }
+    requires_knowledge_propagate.erase(weak_dnf);
     requires_assume_and_learn.erase(weak_dnf);
     dnfs.erase(realized_dnf);
   } else {
@@ -225,14 +227,54 @@ void Problem::add_knowledge(const Knowledge& knowledge) {
   knowledge_propagate(global_knowledge, true);
 }
 
+std::shared_ptr<DNF> Problem::convert(const vector<unordered_map<size_t, bool>>& rows) {
+  vector<size_t> universal;
+  unordered_map<size_t, size_t> frequency;
+  for (const auto pair : rows[0]) {
+    universal.push_back(pair.first);
+    frequency[pair.first]++;
+  }
+  // Filter universal on the remaining position
+  for (size_t r=1; r < rows.size(); r++) {
+    for (size_t i=0; i < universal.size(); i++) {
+      if (rows[r].count(universal[i]) == 0) {
+        std::swap(universal[i], universal.back());
+        universal.pop_back();
+        i--;
+      }
+    }
+    for (const auto pair : rows[r]) {
+      frequency[pair.first]++;
+    }
+  }
+  unordered_map<size_t, size_t> count_freq;
+  for (const auto pair : frequency) {
+    count_freq[pair.second]++;
+  }
+  cout << "Count Freq: ";
+  print_map(count_freq, cout);
+  cout << "Total: " << rows.size() << endl;
+  vector<vector<bool>> table;
+  for (const auto row : rows) {
+    vector<bool> table_row;
+    for (const auto v : universal) {
+      table_row.push_back(row.at(v));
+    }
+    table.push_back(table_row);
+  }
+  return std::make_shared<DNF>(universal, table);
+}
+
 void Problem::assume_and_learn() {
   while (not requires_assume_and_learn.empty()) {
     // Select a "random" function from the set
     auto weak_dnf = *requires_assume_and_learn.begin();
     if (auto realized_dnf = weak_dnf.lock()) {
+      remove_dnf(weak_dnf);
       const auto& variables = realized_dnf->get_variables();
       auto& table = realized_dnf->table;
       bool row_removed = false;
+      vector<unordered_map<size_t, bool>> new_rows;
       for (size_t r=0; r < table.size(); r++) {
         // Assume this row is true
         Knowledge assumption;
@@ -246,27 +288,47 @@ void Problem::assume_and_learn() {
           table.pop_back();
           r--;
           row_removed = true;
+        } else {
+          new_rows.push_back(assumption.assigned);
         }
       }
-      if (row_removed) {
+      auto new_dnf = convert(new_rows);
+      if (new_dnf->variables.size() > variables.size()) {
+        //cout << "Expanded!" << endl;
+        //realized_dnf->print();
+        //new_dnf->print();
+        //for (const auto row : new_rows) {
+        //  print_map(row, cout);
+        //}
+      }
+      add_dnf(new_dnf);
+      // Find only the variables that appear in every "new_row"
+      if (row_removed or new_dnf->variables.size() != variables.size()) {
         // Anything that overlaps this DNF could now potentially have a row removed
-        for (const auto& v : variables) {
+        for (const auto& v : new_dnf->variables) {
           requires_assume_and_learn.insert(variable_to_dnfs[v].begin(), variable_to_dnfs[v].end());
         }
-        auto learned = realized_dnf->create_knowledge();
+        auto learned = new_dnf->create_knowledge();
         if (not learned.empty()) {
           std::cout << "Learned something new" << std::endl;
           learned.print();
           std::cout << std::endl;
           // TODO you may need to use "updates_required" trick for global+learned
           add_knowledge(learned);
-          std::cout << "Total in Global: " << global_knowledge.assigned.size() + global_knowledge.rewrites.size() << std::endl;
+          //cout << "After learning: " << endl;
+          //new_dnf->print();
+          size_t assigned = global_knowledge.assigned.size();
+          size_t rewritten = global_knowledge.rewrites.size();
+          std::cout << "Total in Global: " <<  assigned << "+" << rewritten << "=" << assigned +  rewritten << std::endl;
           std::cout << std::endl;
           if (global_knowledge.is_unsat) {
             return;
           }
         }
+      } else {
+        //cout << "Function complete" << endl;
       }
+      requires_assume_and_learn.erase(new_dnf);
     } else {
       std::cout << "LOCK GET FAILED in assume-and-learn" << std::endl;
     }
@@ -275,61 +337,18 @@ void Problem::assume_and_learn() {
   sanity_check();
 }
 
-vector<bool> extract_key(const vector<size_t>& variables_in_key, const unordered_map<size_t, size_t>& var_to_col, const vector<bool>& row) {
-  vector<bool> key;
-  for (const auto v : variables_in_key) {
-    key.push_back(row[var_to_col.at(v)]);
-  }
-  return key;
-}
-
 void Problem::merge(std::weak_ptr<DNF>& weak_a, std::weak_ptr<DNF>& weak_b) {
-  auto realized_a=weak_a.lock();
-  auto realized_b=weak_b.lock();
-  if (realized_a and realized_b) {
-    // Construct variable to column mappings for both functions
-    unordered_map<size_t, size_t> var_to_col_a, var_to_col_b;
-    for (size_t i=0; i < realized_a->variables.size(); i++) {
-      var_to_col_a[realized_a->variables[i]] = i;
-    }
-    for (size_t i=0; i < realized_b->variables.size(); i++) {
-      var_to_col_b[realized_b->variables[i]] = i;
-    }
-
-    // Find the set of shared variables
-    vector<size_t> shared_var;
-    vector<size_t> b_only_var;
-    for (const auto v : realized_b->variables) {
-      if (var_to_col_a.count(v) == 1) {
-        shared_var.push_back(v);
-      } else {
-        // Only in b
-        b_only_var.push_back(v);
-      }
-    }
-    std::unordered_map<vector<bool>, vector<vector<bool>>> key_to_a_rows;
-    for (const auto row : realized_a->table) {
-      auto key = extract_key(shared_var, var_to_col_a, row);
-      key_to_a_rows[key].push_back(row);
-    }
-    vector<vector<bool>> table;
-    for (const auto b_row : realized_b->table) {
-      auto key = extract_key(shared_var, var_to_col_b, b_row);
-      // Iterate over mergable rows, creating copies
-      for (auto new_row : key_to_a_rows[key]) {
-        for (const auto v : b_only_var) {
-          new_row.push_back(b_row[var_to_col_b[v]]);
-        }
-        table.push_back(new_row);
-      }
-    }
-    // Create the variable headers
-    vector<size_t> variables(realized_a->variables.begin(), realized_a->variables.end());
-    variables.insert(variables.end(), b_only_var.begin(), b_only_var.end());
-    auto new_dnf = std::make_shared<DNF>(variables, table);
-  } else {
+  auto realized_a = weak_a.lock();
+  auto realized_b = weak_b.lock();
+  if (not (realized_a and realized_b)) {
     std::cout << "LOCK GET FAILED in merge" << std::endl;
+    return;
   }
+  auto realized_new = std::make_shared<DNF>(DNF::merge(*realized_a, *realized_b));
+  cout << "Merged: " << realized_a->table.size() << "+" << realized_b->table.size() << "=" << realized_new->table.size() << endl;
+  remove_dnf(weak_a);
+  remove_dnf(weak_b);
+  add_dnf(realized_new);
 }
 
 
