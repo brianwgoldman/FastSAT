@@ -48,7 +48,7 @@ class Problem {
   void remove_dnf(std::weak_ptr<DNF>& weak_dnf);
   void clean_up_bins(const unordered_set<size_t>& require_updating);
 
-  std::shared_ptr<DNF> convert(const vector<unordered_map<size_t, bool>>& rows);
+  std::shared_ptr<DNF> convert(const vector<std::unordered_map<size_t, bool>>& rows);
   size_t total_variables;
 };
 
