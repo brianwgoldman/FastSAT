@@ -30,6 +30,7 @@ unordered_set<size_t> Knowledge::add(const size_t variable, const bool value) {
   if (it != sources.end()) {
     // For each thing that can rewrite to this
     for (const auto new_variable : it->second) {
+      // TODO might be better to explicitly use iterators here
       auto & rewrite = rewrites[new_variable];
       auto new_value = value;
       if (rewrite.negated) {
@@ -50,6 +51,7 @@ unordered_set<size_t> Knowledge::add(const size_t variable, const bool value) {
     if (not result.second) {
       // If you have seen this assignment before
       if (result.first->second != assignment.second) {
+        // This new assignment contradicts a previous assignment
         is_unsat = true;
       }
     } else {
@@ -92,6 +94,7 @@ unordered_set<size_t> Knowledge::add(const TwoConsistency& rewrite) {
     } else {
       assert(rewrite.to == overlap.to and rewrite.from == overlap.from);
       if (rewrite.negated != overlap.negated) {
+        // We have found two rewrite rules that contradict each other
         is_unsat = true;
       }
       return {};
@@ -138,6 +141,7 @@ unordered_set<size_t> Knowledge::add(const Knowledge& knowledge) {
   is_sat |= knowledge.is_sat;
   is_unsat |= knowledge.is_unsat;
   unordered_set<size_t> has_been_updated;
+  // Add each assignment in "knowledge" to "*this"
   for (const auto & assignment : knowledge.assigned) {
     auto result = add(assignment.first, assignment.second);
     has_been_updated.insert(result.begin(), result.end());
@@ -161,8 +165,12 @@ void Knowledge::print(std::ostream& out) const {
   out << "Assigned: " << assigned.size() << endl;
   print_map(assigned, out);
   out << "Two Consistencies: " << rewrites.size() << endl;
-  for (const auto pair : rewrites) {
-    pair.second.print(out);
+  if (rewrites.size() > 0) {
+    for (const auto pair : rewrites) {
+      pair.second.print(out);
+      out << ", ";
+    }
+    out << endl;
   }
 }
 
@@ -171,5 +179,5 @@ void TwoConsistency::print(std::ostream& out) const {
   if (negated) {
     out << "!";
   }
-  out << "=" << to << endl;
+  out << "=" << to;
 }

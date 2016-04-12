@@ -1,10 +1,6 @@
-/*
- * DNF.h
- *
- *  Created on: Apr 4, 2016
- *      Author: goldman
- */
-
+// The DNF class stores a single function's truth table,
+// such that it knows all variables the function uses and
+// stores a row for each "true" assignment of those variables
 #ifndef DNF_H_
 #define DNF_H_
 
@@ -15,15 +11,16 @@ using std::size_t;
 
 #include "Knowledge.h"
 
+// TODO Consider switching from "row x column to column x row"
 class DNF {
  public:
   DNF() = default;
   DNF(vector<size_t>& var, vector<vector<bool>>& tab) : variables(var), table(tab) {
 
   }
-  virtual ~DNF() = default;
   void print(std::ostream& out=std::cout) const;
   Knowledge create_knowledge() const;
+  Knowledge create_knowledge_alternate() const;
   bool apply_knowledge(const Knowledge& knowledge);
   const vector<size_t>& get_variables() {
     return variables;
@@ -32,10 +29,9 @@ class DNF {
     return table;
   }
   static DNF merge(const DNF& a, const DNF& b);
- //private:
+ private:
   vector<size_t> variables;
   vector<vector<bool>> table;
-  vector<size_t> previously_used_variables;
   void remove_column(size_t i);
 };
 
