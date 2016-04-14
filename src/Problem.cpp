@@ -156,6 +156,13 @@ void Problem::knowledge_propagate(Knowledge& knowledge, bool modify_in_place) {
     while (buffer.size() > 0) {
       auto weak_dnf = buffer.back();
       buffer.pop_back();
+      if (not weak_dnf.lock()) {
+        // TODO REMOVE THIS
+        continue;
+      }
+      if (modify_in_place) {
+        //weak_dnf = resolve_overlaps(weak_dnf);
+      }
       auto realized_dnf = weak_dnf.lock();
       assert(realized_dnf);
       if (not modify_in_place) {
@@ -225,16 +232,19 @@ void Problem::remove_dnf(std::weak_ptr<DNF>& weak_dnf) {
 }
 
 void Problem::clean_up_bins(const unordered_set<size_t>& update_required) {
+  weak_dnf_set need_cleaning;
   for (const auto v : update_required) {
     auto assigned_it = global_knowledge.assigned.find(v);
     auto rewrite_it = global_knowledge.rewrites.find(v);
     if (assigned_it != global_knowledge.assigned.end()) {
       // This variable has been assigned, so clear the bin
+      need_cleaning.insert(variable_to_dnfs[v].begin(), variable_to_dnfs[v].end());
       variable_to_dnfs[v].clear();
     } else if (rewrite_it != global_knowledge.rewrites.end()) {
       // This variable has been rewritten, so move the contents of its bin
       const auto& rewrite = rewrite_it->second;
       auto& moving = variable_to_dnfs[rewrite.from];
+      need_cleaning.insert(moving.begin(), moving.end());
       variable_to_dnfs[rewrite.to].insert(moving.begin(), moving.end());
       moving.clear();
     } else {
@@ -423,7 +433,6 @@ std::shared_ptr<DNF> Problem::smart_convert(vector<unordered_map<size_t, bool>>&
 std::weak_ptr<DNF> Problem::resolve_overlaps(std::weak_ptr<DNF>& weak_dnf) {
   auto realized_dnf = weak_dnf.lock();
   assert(realized_dnf);
-  assert(realized_dnf->get_variables().size() > 0);
   unordered_map<std::shared_ptr<DNF>, size_t> overlap_count;
   // Count how often other dnf overlaps "weak_dnf"
   for (const auto v : realized_dnf->get_variables()) {
