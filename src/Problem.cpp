@@ -19,6 +19,7 @@ using std::cout;
 using std::endl;
 
 #include <math.h>
+// TODO Functions can lose variables due to all *, which won't get updated in the bins
 
 void Problem::load(const string& filename) {
   // clear out the old problem
@@ -59,7 +60,7 @@ void Problem::load_dnf(const string& filename) {
   variable_to_dnfs.resize(total_variables + 1);
   // Ignore the second line
   getline(in, line);
-  vector<vector<bool>> table;
+  vector<vector<char>> table;
 
   while (getline(in, line)) {
     istringstream iss(line);
@@ -164,6 +165,7 @@ void Problem::knowledge_propagate(Knowledge& knowledge, bool modify_in_place) {
         //weak_dnf = resolve_overlaps(weak_dnf);
       }
       auto realized_dnf = weak_dnf.lock();
+
       assert(realized_dnf);
       if (not modify_in_place) {
         // Makes a copy
@@ -252,20 +254,50 @@ void Problem::clean_up_bins(const unordered_set<size_t>& update_required) {
       assert(false);
     }
   }
+  for (auto weak_dnf : need_cleaning) {
+    auto realized_dnf = weak_dnf.lock();
+    if (not realized_dnf) {
+      // TODO FIX THIS
+      continue;
+    }
+    assert(realized_dnf);
+    realized_dnf->apply_knowledge(global_knowledge);
+  }
+  for (auto weak_dnf : need_cleaning) {
+    auto realized_dnf = weak_dnf.lock();
+    if (not realized_dnf) {
+      // TODO FIX THIS
+      continue;
+    }
+    size_t dnf_variables = realized_dnf->get_variables().size();
+    size_t maximum_rows = 1 << dnf_variables;
+    if (dnf_variables == 0 or realized_dnf->get_table().size() == maximum_rows) {
+      // Remove this function entirely from this problem as it is always satisfied
+      remove_dnf(weak_dnf);
+    } else {
+      weak_dnf = resolve_overlaps(weak_dnf);
+      requires_knowledge_propagate.insert(weak_dnf);
+      requires_assume_and_learn.insert(weak_dnf);
+    }
+  }
 }
 
 
 void Problem::add_knowledge(const Knowledge& knowledge) {
   auto update_required = global_knowledge.add(knowledge);
   // Figure out which dnfs are directly affected by the new knowledge
+  /*
   for (const auto v : update_required) {
     requires_knowledge_propagate.insert(variable_to_dnfs[v].begin(), variable_to_dnfs[v].end());
   }
+  */
   clean_up_bins(update_required);
   // propagate the new knowledge
   knowledge_propagate(global_knowledge, true);
 }
-std::shared_ptr<DNF> Problem::simple_convert(vector<unordered_map<size_t, bool>>& rows) {
+
+
+std::shared_ptr<DNF> simple_convert(vector<unordered_map<size_t, bool>>& rows) {
   vector<size_t> universal;
   assert(rows.size() > 0);
   for (const auto pair : rows[0]) {
@@ -281,9 +313,9 @@ std::shared_ptr<DNF> Problem::simple_convert(vector<unordered_map<size_t, bool>>
       }
     }
   }
-  vector<vector<bool>> table;
+  vector<vector<char>> table;
   for (const auto row : rows) {
-    vector<bool> table_row;
+    vector<char> table_row;
     for (const auto v : universal) {
       table_row.push_back(row.at(v));
     }
@@ -419,9 +451,9 @@ std::shared_ptr<DNF> Problem::smart_convert(vector<unordered_map<size_t, bool>>&
     }
   }
   vector<size_t> ordered_universal(universal.begin(), universal.end());
-  vector<vector<bool>> table;
+  vector<vector<char>> table;
   for (const auto row : rows) {
-    vector<bool> table_row;
+    vector<char> table_row;
     for (const auto v : ordered_universal) {
       table_row.push_back(row.at(v));
     }
@@ -431,53 +463,78 @@ std::shared_ptr<DNF> Problem::smart_convert(vector<unordered_map<size_t, bool>>&
 }
 
 std::weak_ptr<DNF> Problem::resolve_overlaps(std::weak_ptr<DNF>& weak_dnf) {
+  //return weak_dnf;
   auto realized_dnf = weak_dnf.lock();
+  // TODO remove this
+  if (not realized_dnf) {
+    return weak_dnf;
+  }
   assert(realized_dnf);
   unordered_map<std::shared_ptr<DNF>, size_t> overlap_count;
   // Count how often other dnf overlaps "weak_dnf"
   for (const auto v : realized_dnf->get_variables()) {
     for (const auto& weak_overlap : variable_to_dnfs[v]) {
+      // TODO Remove this
+      if (not weak_overlap.lock()) {
+        continue;
+      }
       assert(weak_overlap.lock());
       overlap_count[weak_overlap.lock()]++;
     }
   }
+  auto original_map = realized_dnf->convert_to_map();
   // Ensure you don't find yourself
   overlap_count.erase(realized_dnf);
+  vector<unordered_map<size_t, bool>> result_map;
   for (const auto pair : overlap_count) {
-    if (pair.second == realized_dnf->get_variables().size()) {
-      // If pair.first has a superset of variables in realized_dnf, merge and stop
-      std::weak_ptr<DNF> weak_overlap = pair.first;
-      cout << "Found superset of working dnf, starting merge" << endl;
-      return merge(weak_overlap, weak_dnf);
-    } else if (pair.second == pair.first->get_variables().size()) {
-      // If all variables in pair.first are in realized_dnf
-      cout << "Found subset of working dnf, merging it in and recursing" << endl;
-      std::weak_ptr<DNF> weak_overlap = pair.first;
-      auto result = merge(weak_overlap, weak_dnf);
-      // TODO I'm not sure you need to recurse in this case
-      return resolve_overlaps(result);
+    auto partner_map = pair.first->convert_to_map();
+    bool attempt = no_growth_map_merge(original_map, partner_map, result_map);
+    if (attempt) {
+      auto result = std::make_shared<DNF>(result_map);
+      cout << "Merging " << realized_dnf->get_table().size()
+           << "+" << pair.first->get_table().size()
+           << "=" << result->get_table().size() << endl;
+      std::weak_ptr<DNF> tmp = realized_dnf;
+      remove_dnf(tmp);
+      tmp = pair.first;
+      remove_dnf(tmp);
+      add_dnf(result);
+      original_map = result->convert_to_map();
+      realized_dnf = result;
+      weak_dnf = realized_dnf;
     }
   }
   return weak_dnf;
 }
 
 void Problem::assume_and_learn() {
+  size_t good=0, bad=0;
+  unordered_map<std::shared_ptr<DNF>, size_t> count;
   while (not requires_assume_and_learn.empty()) {
     print_short();
     auto realized_dnf = requires_assume_and_learn.begin()->lock();
     assert(realized_dnf);
-    std::pair<size_t, size_t> current_score = {-realized_dnf->get_variables().size(),realized_dnf->get_table().size()};
+    //std::pair<size_t, size_t> current_score = {-realized_dnf->get_variables().size(), realized_dnf->get_table().size()};
+    //size_t current_score = count[realized_dnf];
+    //std::pair<size_t, size_t> current_score = {count[realized_dnf], *min_element(realized_dnf->get_variables().begin(), realized_dnf->get_variables().end())};
+    std::pair<size_t, size_t> current_score = {count[realized_dnf], realized_dnf->get_table().size()};
     // Find the "best", this could probably be made more efficient
     for (const auto weak_new : requires_assume_and_learn) {
       auto realized_new = weak_new.lock();
       assert(realized_new);
-      std::pair<size_t, size_t> new_score = {-realized_new->get_variables().size(), realized_new->get_table().size()};
-
+      //std::pair<size_t, size_t> new_score = {-realized_new->get_variables().size(), realized_new->get_table().size()};
+      //size_t new_score = count[realized_new];
+      //std::pair<size_t, size_t> new_score = {count[realized_new], *min_element(realized_new->get_variables().begin(), realized_new->get_variables().end())};
+      std::pair<size_t, size_t> new_score = {count[realized_new], realized_new->get_table().size()};
       if (current_score > new_score) {
         realized_dnf = realized_new;
         current_score = new_score;
       }
     }
+    size_t new_count = count[realized_dnf] + 1;
+    count.erase(realized_dnf);
+    cout << "COUNT: " << new_count << " good: " << good << " bad: " << bad << endl;
+    //cout << "Good: " << good << " bad: " << bad << endl;
     // Temporarily remove it from the problem (will remove it from requires_assume_and_learn)
     std::weak_ptr<DNF> weak_dnf = realized_dnf;
     // TODO when you remove smart pointers, you'll need to make this safe again
@@ -486,12 +543,15 @@ void Problem::assume_and_learn() {
     const auto& table = realized_dnf->get_table();
     cout << "Before " << variables.size() << "x" << table.size() << endl;
     vector<unordered_map<size_t, bool>> new_rows;
-    for (const auto& row : table) {
+    for (const auto& row : realized_dnf->convert_to_map()) {
       // Assume this row is true
       Knowledge assumption;
+      assumption.assigned = row;
+      /*
       for (size_t i=0; i < variables.size(); i++) {
         assumption.add(variables[i], row[i]);
       }
+      */
       propagate_assumption(assumption);
 
       if (not assumption.is_unsat) {
@@ -499,20 +559,30 @@ void Problem::assume_and_learn() {
         new_rows.push_back(assumption.assigned);
       }
     }
-    auto new_dnf = simple_convert(new_rows);
+    //auto new_dnf = simple_convert(new_rows);
+    auto new_dnf = std::make_shared<DNF>(new_rows);
     cout << "After " << new_dnf->get_variables().size() << "x" << new_dnf->get_table().size() << endl;
+    if (new_dnf->get_variables().size() == realized_dnf->get_variables().size() and
+        new_dnf->get_table().size() == realized_dnf->get_table().size()) {
+      bad++;
+    } else {
+      good++;
+    }
     // Add it back into the problem
     add_dnf(new_dnf);
     // Resolve any subset/superset relationships this new dnf may ave
     std::weak_ptr<DNF> weak_new = new_dnf;
     weak_new = resolve_overlaps(weak_new);
     new_dnf = weak_new.lock();
+    count[new_dnf] = new_count;
     // If the variables or the rows changed
     if (new_dnf->get_variables().size() != variables.size() or new_dnf->get_table().size() != table.size()) {
       // Anything that overlaps this DNF could now potentially have a row removed
+      //*
       for (const auto v : new_dnf->get_variables()) {
         requires_assume_and_learn.insert(variable_to_dnfs[v].begin(), variable_to_dnfs[v].end());
       }
+      //*/
       auto learned = new_dnf->create_knowledge();
       if (not learned.empty()) {
         std::cout << "Learned something new" << std::endl;
@@ -526,6 +596,7 @@ void Problem::assume_and_learn() {
     }
     requires_assume_and_learn.erase(new_dnf);
   }
+  cout << "Good: " << good << " Bad: " << bad << endl;
   print_short();
 }
 

@@ -12,6 +12,28 @@ using std::find;
 #include <unordered_map>
 using std::unordered_map;
 
+DNF::DNF(const vector<unordered_map<size_t, bool>>& rows) {
+  // find all of the variables
+  unordered_set<size_t> unique_vars;
+  for (const auto& row : rows) {
+    for (const auto pair : row) {
+      unique_vars.insert(pair.first);
+    }
+  }
+  variables.insert(variables.end(), unique_vars.begin(), unique_vars.end());
+  for (const auto& row : rows) {
+    table.emplace_back();
+    for (const auto v : variables) {
+      auto result = row.find(v);
+      if (result != row.end()) {
+        table.back().push_back(result->second);
+      } else {
+        table.back().push_back(EITHER);
+      }
+    }
+  }
+}
+
 void DNF::print(std::ostream& out) const {
   if (variables.size() == 0) {
     out << "(Empty DNF)" << endl;
@@ -21,9 +43,10 @@ void DNF::print(std::ostream& out) const {
     out << var << " ";
   }
   out << endl;
+  char lookup[] = {'0', '1', '*'};
   for (const auto& row : table) {
     for (const auto bit : row) {
-      out << bit << " ";
+      out << lookup[static_cast<size_t>(bit)] << " ";
     }
     out << endl;
   }
@@ -37,22 +60,40 @@ Knowledge DNF::create_knowledge() const {
     return knowledge;
   }
   assert(variables.size() > 0 or table.size() == 1);
-
+  // Find all columns that do not contain "EITHER"
+  vector<size_t> complete_column;
   size_t total_variables = variables.size();
-  for (size_t i=0; i < total_variables; i++) {
+  for (size_t c=0; c < total_variables; c++) {
+    bool found = false;
+    for (const auto& row : table) {
+      if (row[c] == EITHER) {
+        found = true;
+        break;
+      }
+    }
+    if (not found) {
+      complete_column.push_back(c);
+    }
+  }
+
+
+  const size_t total_complete = complete_column.size();
+  for (size_t i=0; i < total_complete; i++) {
+    const size_t c1 = complete_column[i];
     // The bool in this pair is if the relationship is "negated"
     vector<std::pair<size_t, bool>> consistent;
     // Record the relationships between variables in the first row
-    for (size_t j=i+1; j < total_variables; j++) {
-      consistent.emplace_back(j, table[0][i] != table[0][j]);
+    for (size_t j=i+1; j < total_complete; j++) {
+      const size_t c2 = complete_column[j];
+      consistent.emplace_back(c2, table[0][c1] != table[0][c2]);
     }
     // Check if that relationship is maintained across all rows
-    size_t sum_of_i = 0;
+    size_t sum_of_c1 = 0;
     for (const auto& row : table) {
-      auto value_of_i = row[i];
-      sum_of_i += value_of_i;
+      auto value_of_c1 = row[c1];
+      sum_of_c1 += value_of_c1;
       for (size_t j=0; j < consistent.size(); j++) {
-        auto negated = value_of_i != row[consistent[j].first];
+        auto negated = value_of_c1 != row[consistent[j].first];
         if (negated != consistent[j].second) {
           // the pattern is broken, so remove it from "consistent"
           swap(consistent[j], consistent.back());
@@ -61,65 +102,21 @@ Knowledge DNF::create_knowledge() const {
         }
       }
     }
-    if (sum_of_i == 0) {
+    if (sum_of_c1 == 0) {
       // If "i" was always 0, assign it
-      knowledge.add(variables[i], false);
-    } else if (sum_of_i == table.size()) {
+      knowledge.add(variables[c1], false);
+    } else if (sum_of_c1 == table.size()) {
       // If "i" was always 1, assign it
-      knowledge.add(variables[i], true);
+      knowledge.add(variables[c1], true);
     } else {
       // Anything still consistent here is actually consistent
       for (const auto& pair : consistent) {
-        knowledge.add(TwoConsistency(variables[i], variables[pair.first], pair.second));
+        knowledge.add(TwoConsistency(variables[c1], variables[pair.first], pair.second));
       }
     }
   }
   return knowledge;
 }
-
-
-Knowledge DNF::create_knowledge_alternate() const {
-  Knowledge knowledge;
-  if (table.size() == 0) {
-    knowledge.is_unsat = true;
-    return knowledge;
-  }
-  assert(variables.size() > 0 or table.size() == 1);
-  // Create a set of unique patterns to variables
-  unordered_map<vector<bool>, std::pair<size_t, bool>> unique;
-  const size_t total_variables = variables.size();
-  const size_t total_rows = table.size();
-  for (size_t i=0; i < total_variables; i++) {
-    // The row and its inverse
-    vector<bool> key(total_rows);
-    vector<bool> neg_key(total_rows);
-    size_t sum=0;
-    for (size_t r=0; r < total_rows; r++) {
-      const auto bit = table[r][i];
-      key[r] = bit;
-      neg_key[r] = not bit;
-      sum += bit;
-    }
-    if (sum == 0) {
-      knowledge.add(variables[i], false);
-    } else if (sum == total_rows) {
-      knowledge.add(variables[i], true);
-    } else {
-      auto inserted = unique.insert({key, {variables[i], false}});
-      if (inserted.second) {
-        // It was unique, so insert the inverse
-        unique.insert({neg_key, {variables[i], true}});
-      } else {
-        // Only get here because something is already in inserted
-        auto pair = inserted.first->second;
-        knowledge.add(TwoConsistency(variables[i], pair.first, pair.second));
-      }
-    }
-  }
-  return knowledge;
-}
-
-
 
 bool DNF::apply_knowledge(const Knowledge& knowledge) {
   bool change_made = false;
@@ -130,7 +127,7 @@ bool DNF::apply_knowledge(const Knowledge& knowledge) {
       change_made = true;
       // Filter
       for (size_t r=0; r < table.size(); r++) {
-        if (table[r][i] != assigned_it->second) {
+        if (table[r][i] != assigned_it->second and table[r][i] != EITHER) {
           swap(table[r], table.back());
           table.pop_back();
           r--;
@@ -151,11 +148,20 @@ bool DNF::apply_knowledge(const Knowledge& knowledge) {
         // This table includes both parts of a two consistency, so we need to filter
         size_t to_index = to_it - variables.begin();
         for (size_t r=0; r < table.size(); r++) {
-          auto negated = table[r][i] != table[r][to_index];
-          if (negated != rewrite_it->second.negated) {
-            swap(table[r], table.back());
-            table.pop_back();
-            r--;
+          if (table[r][i] != EITHER and table[r][to_index] != EITHER) {
+            // The row can only be invalid if both variables have definitive values
+            auto negated = table[r][i] != table[r][to_index];
+            if (negated != rewrite_it->second.negated) {
+              swap(table[r], table.back());
+              table.pop_back();
+              r--;
+            }
+          } else if (table[r][to_index] == EITHER and table[r][i] != EITHER) {
+            if (rewrite_it->second.negated) {
+              table[r][to_index] = not table[r][i];
+            } else {
+              table[r][to_index] = table[r][i];
+            }
           }
         }
         remove_column(i);
@@ -168,8 +174,28 @@ bool DNF::apply_knowledge(const Knowledge& knowledge) {
         // If the relationship was negated, invert the column
         if (rewrite_it->second.negated) {
           for (auto& row : table) {
-            row[i] = not row[i];
+            if (row[i] != EITHER) {
+              row[i] = not row[i];
+            }
           }
+        }
+      }
+    }
+  }
+  // TODO Two rows different by exactly one set variable
+  if (change_made) {
+    if (table.size() > 0) {
+      for (size_t c=0; c < variables.size(); c++) {
+        bool all_either = true;
+        for (const auto& row : table) {
+          if (row[c] != EITHER) {
+            all_either = false;
+            break;
+          }
+        }
+        if (all_either) {
+          remove_column(c);
+          c--;
         }
       }
     }
@@ -184,62 +210,78 @@ void DNF::remove_column(size_t col) {
   variables.pop_back();
   // Swap each column to the end and delete it
   for (auto & row : table) {
-    swap(row[col], row.back());
+    std::swap(row[col], row.back());
     row.pop_back();
   }
 }
 
-// This function is used by "merge" but isn't needed outside of this file
-vector<bool> extract_key(const vector<size_t>& variables_in_key, const unordered_map<size_t, size_t>& var_to_col, const vector<bool>& row) {
-  vector<bool> key;
-  for (const auto v : variables_in_key) {
-    key.push_back(row[var_to_col.at(v)]);
+
+vector<unordered_map<size_t, bool>> DNF::convert_to_map() const {
+  vector<unordered_map<size_t, bool>> result;
+  for (const auto & row : table) {
+    result.emplace_back();
+    for (size_t c=0; c < row.size(); c++) {
+      if (row[c] != EITHER) {
+        result.back()[variables[c]] = row[c];
+      }
+    }
   }
-  return key;
+  return result;
+}
+
+vector<unordered_map<size_t, bool>> map_merge(vector<unordered_map<size_t, bool>>& a, vector<unordered_map<size_t, bool>>& b) {
+  vector<unordered_map<size_t, bool>> rows;
+  for (const auto row_a : a) {
+    for (const auto row_b : b) {
+      // Check if they are compatable
+      bool compatable = true;
+      unordered_map<size_t, bool> new_row(row_b);
+      for (const auto pair : row_a) {
+        auto result = new_row.insert(pair);
+        if (not result.second and result.first->second != pair.second) {
+          // If they have different values for this variable
+          compatable = false;
+          break;
+        }
+      }
+      if (compatable) {
+        rows.push_back(new_row);
+      }
+    }
+  }
+  return rows;
+}
+
+bool no_growth_map_merge(vector<unordered_map<size_t, bool>>& a, vector<unordered_map<size_t, bool>>& b, vector<unordered_map<size_t, bool>>& result) {
+  const size_t max_size = a.size() + b.size();
+  result.clear();
+  for (const auto row_a : a) {
+    for (const auto row_b : b) {
+      // Check if they are compatable
+      bool compatable = true;
+      unordered_map<size_t, bool> new_row(row_b);
+      for (const auto pair : row_a) {
+        auto result = new_row.insert(pair);
+        if (not result.second and result.first->second != pair.second) {
+          // If they have different values for this variable
+          compatable = false;
+          break;
+        }
+      }
+      if (compatable) {
+        result.push_back(new_row);
+        if (result.size() > max_size) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
 }
 
 DNF DNF::merge(const DNF& a, const DNF& b) {
-  // Construct variable to column mappings for both functions
-  unordered_map<size_t, size_t> var_to_col_a, var_to_col_b;
-  for (size_t i=0; i < a.variables.size(); i++) {
-    var_to_col_a[a.variables[i]] = i;
-  }
-  for (size_t i=0; i < b.variables.size(); i++) {
-    var_to_col_b[b.variables[i]] = i;
-  }
-
-  // Find the set of shared variables
-  vector<size_t> shared_var;
-  vector<size_t> b_only_var;
-  for (const auto v : b.variables) {
-    if (var_to_col_a.count(v) == 1) {
-      // If "v", which we know is in b, is also in a
-      shared_var.push_back(v);
-    } else {
-      // Only in b
-      b_only_var.push_back(v);
-    }
-  }
-  // Group rows in "a" by their key
-  std::unordered_map<vector<bool>, vector<vector<bool>>> key_to_a_rows;
-  for (const auto row : a.table) {
-    auto key = extract_key(shared_var, var_to_col_a, row);
-    key_to_a_rows[key].push_back(row);
-  }
-  vector<vector<bool>> table;
-  for (const auto b_row : b.table) {
-    auto key = extract_key(shared_var, var_to_col_b, b_row);
-    // Iterate over mergable rows, creating copies
-    for (auto new_row : key_to_a_rows[key]) {
-      // Add the variables that are only in b
-      for (const auto v : b_only_var) {
-        new_row.push_back(b_row[var_to_col_b[v]]);
-      }
-      table.push_back(new_row);
-    }
-  }
-  // Create the variable headers
-  vector<size_t> variables(a.variables.begin(), a.variables.end());
-  variables.insert(variables.end(), b_only_var.begin(), b_only_var.end());
-  return DNF(variables, table);
+  auto map_a = a.convert_to_map();
+  auto map_b = b.convert_to_map();
+  auto map_result = map_merge(map_a, map_b);
+  return DNF(map_result);
 }
