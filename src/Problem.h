@@ -42,6 +42,7 @@ class Problem {
   std::weak_ptr<DNF> resolve_overlaps(std::weak_ptr<DNF>& weak_dnf);
   void knowledge_propagate(Knowledge& knowledge, bool modify_in_place);
   void load_dnf(const string& filename);
+  void load_cnf(const string& filename);
   void add_knowledge(const Knowledge& knowledge);
   //Knowledge knowledge_propagate(const Knowledge& knowledge, weak_dnf_set& open_set, bool modify_in_place);
   void add_dnf(const std::shared_ptr<DNF>& dnf);

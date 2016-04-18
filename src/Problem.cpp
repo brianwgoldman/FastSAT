@@ -38,11 +38,23 @@ void Problem::load(const string& filename) {
   // TODO Write a loading method for cnf form
   if (extension == "dnf") {
     load_dnf(filename);
+  } else if (extension == "cnf" or extension == "dimacs") {
+    load_cnf(filename);
   } else {
     throw std::invalid_argument("Bad problem file extension: '" + extension + "'");
   }
 
   sanity_check();
+}
+
+vector<char> number_to_row(size_t number, const size_t number_of_variables) {
+  // Add a row to the table
+  vector<char> row(number_of_variables);
+  for (size_t i=0; i < number_of_variables; i++) {
+    // Finds the bit value of "position" at i
+    row[i] = ((number >> i) & 1);
+  }
+  return row;
 }
 
 void Problem::load_dnf(const string& filename) {
@@ -83,11 +95,7 @@ void Problem::load_dnf(const string& filename) {
           continue;
         }
         // Add a row to the table
-        table.emplace_back(number_of_variables);
-        for (size_t i=0; i < number_of_variables; i++) {
-          // Finds the bit value of "position" at i
-          table.back()[i] = ((position >> i) & 1);
-        }
+        table.emplace_back(number_to_row(position, number_of_variables));
       }
     } else {
       // Build up the variables to go with the table
@@ -104,6 +112,61 @@ void Problem::load_dnf(const string& filename) {
     }
   }
   assert(total_dnfs == dnfs.size());
+}
+
+void Problem::load_cnf(const string& filename) {
+  ifstream in(filename);
+  string line, word;
+  size_t total_functions;
+  int literal;
+  size_t loaded_functions = 0;
+  while (getline(in, line)) {
+    istringstream iss(line);
+    if (line.empty() or line[0] == 'c') {
+      continue;
+    }
+    else if (line[0] == 'p') {
+      // Process the header
+      iss >> word;
+      assert(word == "p");
+      iss >> word;
+      assert(word == "cnf");
+      iss >> total_variables >> total_functions;
+      variable_to_dnfs.resize(total_variables + 1);
+      continue;
+    }
+    // If you got this far, its to process a cnf
+    assert(total_variables > 0 and variable_to_dnfs.size() == total_variables+1);
+    vector<size_t> variables;
+    vector<char> false_pattern;
+    while (iss >> literal) {
+      if (literal != 0) {
+        // If the literal is negated, having a true makes this clause false.
+        false_pattern.push_back(literal < 0);
+        if (literal < 0) {
+          literal = -literal;
+        }
+        assert(literal > 0 and static_cast<size_t>(literal) <= total_variables);
+        variables.push_back(literal);
+      }
+    }
+    assert(literal == 0);
+    size_t limit = 1 << variables.size();
+    vector<vector<char>> table;
+    for (size_t i=0; i < limit; i++) {
+      table.emplace_back(number_to_row(i, variables.size()));
+      if (table.back() == false_pattern) {
+        table.pop_back();
+      }
+    }
+    assert(table.size() == limit - 1);
+    auto made = std::make_shared<DNF>(variables, table);
+    add_dnf(made);
+    loaded_functions++;
+    //std::weak_ptr<DNF> weak_dnf = made;
+    //resolve_overlaps(weak_dnf);
+  }
+  assert(loaded_functions == total_functions);
 }
 
 void Problem::print(std::ostream& out) const {
@@ -324,34 +387,6 @@ std::shared_ptr<DNF> simple_convert(vector<unordered_map<size_t, bool>>& rows) {
   return std::make_shared<DNF>(universal, table);
 }
 
-
-std::shared_ptr<DNF> Problem::old_convert(vector<unordered_map<size_t, bool>>& rows) {
-  unordered_map<size_t, size_t> frequency;
-
-  // Figure out how often each variable appears
-  for (const auto & row : rows) {
-    for (const auto pair : row) {
-      frequency[pair.first]++;
-    }
-  }
-
-  // Find all variables that occur in every row
-  vector<size_t> universal;
-  for (const auto pair : frequency) {
-    if (pair.second == rows.size()) {
-      universal.push_back(pair.first);
-    }
-  }
-  vector<vector<bool>> table;
-  for (const auto row : rows) {
-    vector<bool> table_row;
-    for (const auto v : universal) {
-      table_row.push_back(row.at(v));
-    }
-    table.push_back(table_row);
-  }
-  return std::make_shared<DNF>(universal, table);
-}
 
 std::shared_ptr<DNF> Problem::smart_convert(vector<unordered_map<size_t, bool>>& rows) {
   // This function is like the other "convert"s, except it also tries to repair off-by-one variables
