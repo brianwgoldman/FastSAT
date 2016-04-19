@@ -230,6 +230,7 @@ vector<unordered_map<size_t, bool>> DNF::convert_to_map() const {
 }
 
 vector<unordered_map<size_t, bool>> map_merge(vector<unordered_map<size_t, bool>>& a, vector<unordered_map<size_t, bool>>& b) {
+  //assert(false);
   vector<unordered_map<size_t, bool>> rows;
   for (const auto row_a : a) {
     for (const auto row_b : b) {
@@ -253,6 +254,7 @@ vector<unordered_map<size_t, bool>> map_merge(vector<unordered_map<size_t, bool>
 }
 
 bool no_growth_map_merge(vector<unordered_map<size_t, bool>>& a, vector<unordered_map<size_t, bool>>& b, vector<unordered_map<size_t, bool>>& result) {
+  //assert(false);
   const size_t max_size = a.size() + b.size();
   result.clear();
   for (const auto row_a : a) {

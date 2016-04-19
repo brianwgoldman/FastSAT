@@ -27,8 +27,10 @@ class Problem {
 
   void knowledge_propagate();
   void propagate_assumption(Knowledge& assumption);
-
   void assume_and_learn();
+
+  void merge_small_rows(const size_t limit);
+
   std::weak_ptr<DNF> merge(std::weak_ptr<DNF>& weak_a, std::weak_ptr<DNF>& weak_b);
 
   // TODO most of these things should probably be private
@@ -38,7 +40,11 @@ class Problem {
   weak_dnf_set requires_assume_and_learn;
   Knowledge global_knowledge;
   void sanity_check();
+  std::shared_ptr<DNF> assume_and_learn(std::shared_ptr<DNF>& realized_dnf);
+  void scan_variables();
+  void equal_variable_assuming();
  private:
+  std::shared_ptr<DNF> fill_in_stars(std::shared_ptr<DNF> realized_dnf);
   std::weak_ptr<DNF> resolve_overlaps(std::weak_ptr<DNF>& weak_dnf);
   void knowledge_propagate(Knowledge& knowledge, bool modify_in_place);
   void load_dnf(const string& filename);

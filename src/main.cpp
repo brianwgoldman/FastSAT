@@ -51,17 +51,54 @@ int main(int argc, char * argv[]) {
   problem.global_knowledge.print();
   problem.print_short(std::cout);
   cout << "Finished normal propagate" << endl;
+  /*problem.print();
+  unordered_map<size_t, size_t> counts;
+  for (const auto & dnf : problem.dnfs) {
+    for (const auto v : dnf->get_variables()) {
+      counts[v]++;
+    }
+  }
+  //print_map(counts, cout);
+  unordered_map<size_t, size_t> freq_counts;
+  for (const auto pair : counts) {
+    freq_counts[pair.second]++;
+  }
+  print_map(freq_counts, cout);
+  std::weak_ptr<DNF> weak_best;
+  size_t score = -1;
+  for (const auto & dnf : problem.dnfs) {
+    weak_dnf_set overlaps;
+    for (const auto v : dnf->get_variables()) {
+      overlaps.insert(problem.variable_to_dnfs[v].begin(), problem.variable_to_dnfs[v].end());
+    }
+    if (score > overlaps.size()) {
+      score = overlaps.size();
+      weak_best = dnf;
+    }
+  }
+  weak_best.lock()->print();
+  cout << "Overlaps: " << score << endl;
+  auto realized = weak_best.lock();
+  problem.assume_and_learn(realized);
+  realized->create_knowledge().print();
+  return 0;
+  //*/
+  problem.print_short(std::cout);
+  problem.equal_variable_assuming();
+  problem.print_short(std::cout);
+  return 0;
   cout << "Starting assume-and-learn" << endl;
   problem.assume_and_learn();
   problem.sanity_check();
   cout << "Finished first assume-and-learn" << endl;
-
+  //problem.print();
+  return 0;
   for (size_t i=0; problem.dnfs.size() > 0 and i < 1000; i++) {
     heuristic_merge(problem);
     problem.knowledge_propagate();
     problem.assume_and_learn();
   }
-  problem.sanity_check();
+  //problem.sanity_check();
   cout << "Finished merge+assume-and-learn" << endl;
   problem.global_knowledge.print();
   problem.print();
