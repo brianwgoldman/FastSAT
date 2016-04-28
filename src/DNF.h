@@ -20,22 +20,25 @@ const char EITHER=2;
 class DNF {
  public:
   DNF() = default;
-  DNF(vector<size_t>& var, vector<vector<char>>& tab) : variables(var), table(tab) {
+  DNF(const vector<size_t>& var, const vector<vector<char>>& tab) : variables(var), table(tab) {
 
   }
   DNF(const vector<unordered_map<size_t, bool>>& rows);
   void print(std::ostream& out=std::cout) const;
+  void print_short(std::ostream& out=std::cout) const;
   Knowledge create_knowledge() const;
   Knowledge create_knowledge_alternate() const;
   bool apply_knowledge(const Knowledge& knowledge);
-  const vector<size_t>& get_variables() {
+  const vector<size_t>& get_variables() const {
     return variables;
   }
-  const vector<vector<char>>& get_table() {
+  const vector<vector<char>>& get_table() const {
     return table;
   }
   vector<unordered_map<size_t, bool>> convert_to_map() const;
   static DNF merge(const DNF& a, const DNF& b);
+  DNF without_variable(const size_t variable) const;
+  bool is_always_sat() const;
  private:
   vector<size_t> variables;
   vector<vector<char>> table;

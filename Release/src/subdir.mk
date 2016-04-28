@@ -5,18 +5,21 @@
 # Add inputs and outputs from these tool invocations to the build variables 
 CPP_SRCS += \
 ../src/DNF.cpp \
+../src/Decomposition.cpp \
 ../src/Knowledge.cpp \
 ../src/Problem.cpp \
 ../src/main.cpp 
 
 OBJS += \
 ./src/DNF.o \
+./src/Decomposition.o \
 ./src/Knowledge.o \
 ./src/Problem.o \
 ./src/main.o 
 
 CPP_DEPS += \
 ./src/DNF.d \
+./src/Decomposition.d \
 ./src/Knowledge.d \
 ./src/Problem.d \
 ./src/main.d 

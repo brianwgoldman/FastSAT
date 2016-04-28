@@ -43,7 +43,8 @@ class Knowledge {
   // Used to quickly update rewrites when new knowledge is added
   std::unordered_map<size_t, std::vector<size_t>> sources;
 };
-
+using std::string;
+void apply_to_cnf(const string in_filename, const Knowledge& knowledge, const string out_filename);
 
 // TODO Put this somewhere better
 #include <algorithm>

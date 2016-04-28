@@ -53,13 +53,20 @@ void DNF::print(std::ostream& out) const {
   out << endl;
 }
 
+void DNF::print_short(std::ostream& out) const {
+  out << variables.size() << "x" << table.size() << endl;
+}
+
 Knowledge DNF::create_knowledge() const {
   Knowledge knowledge;
   if (table.size() == 0) {
     knowledge.is_unsat = true;
     return knowledge;
   }
-  assert(variables.size() > 0 or table.size() == 1);
+  if (not (variables.size() > 0 or table.size() == 1)) {
+    print_short();
+    assert(false);
+  }
   // Find all columns that do not contain "EITHER"
   vector<size_t> complete_column;
   size_t total_variables = variables.size();
@@ -286,4 +293,34 @@ DNF DNF::merge(const DNF& a, const DNF& b) {
   auto map_b = b.convert_to_map();
   auto map_result = map_merge(map_a, map_b);
   return DNF(map_result);
+}
+
+DNF DNF::without_variable(const size_t target_variable) const {
+  // Find the column you are getting rid of
+  size_t target_column = -1;
+  for (size_t c=0; c < variables.size(); c++) {
+    if (variables[c] == target_variable) {
+      target_column = c;
+    }
+  }
+  assert(target_column < variables.size());
+  unordered_set<vector<char>> unique_rows;
+  for (auto row : table) {
+    // Remove that variable from that row
+    std::swap(row[target_column], row.back());
+    row.pop_back();
+    unique_rows.insert(row);
+  }
+  auto new_variables = variables;
+  std::swap(new_variables[target_column], new_variables.back());
+  new_variables.pop_back();
+  vector<vector<char>> new_table(unique_rows.begin(), unique_rows.end());
+  return DNF(new_variables, new_table);
+}
+
+bool DNF::is_always_sat() const {
+  // TODO Technically this fails if variables > 31
+  // but I assume you never have more than a billion rows
+  size_t maximum_rows = 1<<variables.size();
+  return table.size() == maximum_rows and table.size() > 0;
 }

@@ -17,6 +17,7 @@ using std::map;
 
 using std::cout;
 using std::endl;
+using std::shared_ptr;
 
 #include <math.h>
 // TODO Functions can lose variables due to all *, which won't get updated in the bins
@@ -175,6 +176,7 @@ void Problem::print(std::ostream& out) const {
     return;
   }
   for (const auto& dnf : dnfs) {
+    dnf->print_short(out);
     dnf->print(out);
   }
 }
@@ -187,7 +189,12 @@ void Problem::print_short(std::ostream& out) const {
   for (const auto dnf : dnfs) {
     total_rows += dnf->get_table().size();
   }
-  out << " Rows: " << total_rows << std::endl;
+  out << " Rows: " << total_rows;
+  size_t real_variables=0;
+  for (const auto& bin : variable_to_dnfs) {
+    real_variables += (bin.size() > 1);
+  }
+  out << " Real Variables: " << real_variables << std::endl;
 }
 
 void Problem::knowledge_propagate() {
@@ -276,6 +283,10 @@ void Problem::knowledge_propagate(Knowledge& knowledge, bool modify_in_place) {
 }
 
 void Problem::add_dnf(const std::shared_ptr<DNF>& dnf) {
+  if (dnf->is_always_sat()) {
+    cout << "Attempted to add an always sat thing, so don't do that" << endl;
+    return;
+  }
   dnfs.insert(dnf);
   std::weak_ptr<DNF> weak_dnf = dnf;
   for (const auto v : dnf->get_variables()) {
@@ -285,7 +296,7 @@ void Problem::add_dnf(const std::shared_ptr<DNF>& dnf) {
   requires_assume_and_learn.insert(weak_dnf);
 }
 
-void Problem::remove_dnf(std::weak_ptr<DNF>& weak_dnf) {
+void Problem::remove_dnf(std::weak_ptr<DNF> weak_dnf) {
   auto realized_dnf = weak_dnf.lock();
   assert(realized_dnf);
   // Remove it from variable bins
@@ -499,6 +510,7 @@ std::shared_ptr<DNF> Problem::smart_convert(vector<unordered_map<size_t, bool>>&
 }
 
 std::weak_ptr<DNF> Problem::resolve_overlaps(std::weak_ptr<DNF>& weak_dnf) {
+  //assert(false);
   //return weak_dnf;
   auto realized_dnf = weak_dnf.lock();
   // TODO remove this
@@ -543,12 +555,547 @@ std::weak_ptr<DNF> Problem::resolve_overlaps(std::weak_ptr<DNF>& weak_dnf) {
   return weak_dnf;
 }
 
+shared_ptr<DNF> split_out_fewest_rows(vector<shared_ptr<DNF>> & group) {
+  assert(group.size() > 0);
+  size_t choice = 0;
+  for (size_t i=1; i < group.size(); i++) {
+    if (group[choice]->get_table().size() > group[i]->get_table().size()) {
+      choice = i;
+    }
+  }
+  std::swap(group[choice], group.back());
+  auto result = group.back();
+  group.pop_back();
+  return result;
+}
+
+shared_ptr<DNF> split_out_most_overlap(vector<shared_ptr<DNF>>& group, const shared_ptr<DNF> partner) {
+  assert(group.size() > 0);
+  unordered_set<size_t> partner_variables(partner->get_variables().begin(), partner->get_variables().end());
+  size_t most_overlap = 0;
+  size_t choice = 0;
+  for (size_t i=0; i < group.size(); i++) {
+    size_t overlap = 0;
+    for (const auto v : group[i]->get_variables()) {
+      overlap += partner_variables.count(v);
+    }
+
+    if (overlap > most_overlap) {
+      most_overlap = overlap;
+      choice = i;
+    }
+  }
+  std::swap(group[choice], group.back());
+  auto result = group.back();
+  group.pop_back();
+  return result;
+}
+
+size_t Problem::freeze_variables_and_insert(DNF raw) {
+  DNF original = raw;
+  size_t removed = 0;
+  auto copy_var = raw.get_variables();
+  for (const auto v : copy_var) {
+    if (variable_to_dnfs[v].size() == 0) {
+      raw = raw.without_variable(v);
+      //cout << "Removing " << v << endl;
+      /*
+      for (const auto test_dnf : dnfs) {
+        for (const auto var : test_dnf->get_variables()) {
+          assert(var != v);
+        }
+      }
+      */
+      removed++;
+    }
+  }
+  //cout << "Removed total of: " << removed << endl;
+  if (removed > 0) {
+    cold_storage.push_back(std::make_shared<DNF>(original));
+  }
+  if (not raw.is_always_sat()) {
+    add_dnf(std::make_shared<DNF>(raw));
+  }
+  return removed;
+}
+
+bool Problem::extract_variable(size_t variable) {
+  // Pull all functions that variable is in out of the problem
+  vector<std::shared_ptr<DNF>> group;
+  for (const auto dnf : variable_to_dnfs[variable]) {
+    auto realized = dnf.lock();
+    assert(realized);
+    assert(not realized->is_always_sat());
+    group.push_back(realized);
+  }
+  for (const auto dnf : group) {
+    remove_dnf(dnf);
+  }
+  if (group.size() == 0) {
+    return false;
+  } else if (group.size() == 1) {
+    auto removed = freeze_variables_and_insert(*group[0]);
+    assert(removed > 0);
+    return true;
+  }
+  // The group size is 2 or more
+  // Find all variables shared by everyone in the group
+  unordered_map<size_t, size_t> frequency;
+  for (const auto dnf : group) {
+    for (const auto v : dnf->get_variables()) {
+      frequency[v] ++;
+    }
+  }
+  unordered_set<size_t> shared_variables;
+  for (const auto pair : frequency) {
+    if (pair.second > 1) {
+      shared_variables.insert(pair.first);
+    }
+  }
+  shared_variables.erase(variable);
+  auto copy_group = group;
+  vector<shared_ptr<DNF>> to_add;
+  shared_ptr<DNF> combined;
+  do {
+    combined = split_out_fewest_rows(copy_group);
+    auto split = decompose_preload(*combined, variable, shared_variables);
+    if (split.size() == 2) {
+      if (split[1].is_always_sat()) {
+        for (auto & dnf : group) {
+          if (dnf == combined) {
+            *dnf = split[0];
+          }
+        }
+      } else {
+        to_add.push_back(std::make_shared<DNF>(split[1]));
+      }
+    }
+    combined = std::make_shared<DNF>(split[0]);
+    if (combined->is_always_sat()) {
+      cout << "LOOPIN LOOPIN LOOPIN" << endl;
+    }
+  } while (combined->is_always_sat() and copy_group.size() > 0);
+  while (copy_group.size() > 0) {
+    shared_ptr<DNF> partner;
+    do {
+      partner = split_out_fewest_rows(copy_group);
+      auto split = decompose_preload(*partner, variable, shared_variables);
+      if (split.size() == 2) {
+        if (split[1].is_always_sat()) {
+          for (auto & dnf : group) {
+            if (dnf == partner) {
+              *dnf = split[0];
+            }
+          }
+        } else {
+          to_add.push_back(std::make_shared<DNF>(split[1]));
+        }
+      }
+      partner = std::make_shared<DNF>(split[0]);
+      if (partner->is_always_sat()) {
+        cout << "POOPIN LOOPIN LOOPIN" << endl;
+      }
+    } while (partner->is_always_sat() and copy_group.size() > 0);
+    if (combined->get_table().size() * partner->get_table().size() > 10000) {
+      copy_group.push_back(partner);
+      break;
+    }
+    if (combined->is_always_sat()) {
+      combined = partner;
+    } else if (not partner->is_always_sat()) {
+      combined = std::make_shared<DNF>(DNF::merge(*combined, *partner));
+    }
+  }
+  if (copy_group.size() == 0) {
+    // Successful merge
+    auto removed = freeze_variables_and_insert(*combined);
+    assert(removed > 0);
+    // Put the residuals back into the problem
+    for (const auto dnf : to_add) {
+      add_dnf(dnf);
+    }
+    // Assert checking only
+    for (const auto dnf : to_add) {
+      for (const auto v : dnf->get_variables()) {
+        assert(v != variable);
+      }
+    }
+    // End assert checking
+    return true;
+  } else {
+    // Merge failed, so just put the stuff back how it was
+    for (const auto dnf : group) {
+      add_dnf(dnf);
+    }
+    return false;
+  }
+}
+
+double predict_quality(const weak_dnf_set& bin) {
+  return bin.size();
+  double score = 1;
+  for (const auto dnf : bin) {
+    assert(dnf.lock());
+    score *= dnf.lock()->get_table().size();
+  }
+  if (score == 0) {
+    for (const auto dnf : bin) {
+      cout << dnf.lock()->get_table().size() << endl;
+    }
+    assert(false);
+  }
+  return score;
+}
+
+bool Problem::make_singles() {
+  bool change_made = false;
+  vector<size_t> still_alive(variable_to_dnfs.size());
+  iota(still_alive.begin(), still_alive.end(), 0);
+  while (still_alive.size() > 0) {
+    size_t choice_index=0;
+    for (size_t i=1; i < still_alive.size(); i++) {
+      if (predict_quality(variable_to_dnfs[still_alive[i]]) < predict_quality(variable_to_dnfs[still_alive[choice_index]])) {
+        choice_index = i;
+      }
+    }
+    auto variable = still_alive[choice_index];
+    std::swap(still_alive[choice_index], still_alive.back());
+    still_alive.pop_back();
+    if (variable_to_dnfs[variable].size() == 0) {
+      continue;
+    }
+    //cout << "Attempting variable " << variable << " of size: " << variable_to_dnfs[variable].size() << " score: " << predict_quality(variable_to_dnfs[variable]) << endl;
+    auto success = extract_variable(variable);
+    if (success) {
+      //cout << "Success" << endl;
+      change_made = true;
+      knowledge_propagate();
+      //print_short();
+    }
+  }
+  return change_made;
+}
+
+bool Problem::reduce_bins() {
+  bool found = false;
+  // Bin the variables based on size
+  vector<vector<size_t>> bins(dnfs.size() + 1);
+  for (size_t v=0; v < variable_to_dnfs.size(); v++) {
+    bins[variable_to_dnfs[v].size()].push_back(v);
+  }
+  for (size_t i=0; i < bins.size(); i++) {
+    for (const auto master_v : bins[i]) {
+      const auto dnfs_with_v = variable_to_dnfs[master_v];
+      if (dnfs_with_v.size() == 0) {
+        continue;
+      } else if (dnfs_with_v.size() == 1) {
+        found = true;
+        auto weak_dnf = *dnfs_with_v.begin();
+        auto realized_dnf = weak_dnf.lock();
+        remove_dnf(weak_dnf);
+        assert(realized_dnf);
+        DNF raw = *realized_dnf;
+
+        size_t removed = 0;
+        auto copy_var = raw.get_variables();
+        for (const auto v : copy_var) {
+          if (variable_to_dnfs[v].size() == 0) {
+            raw = raw.without_variable(v);
+            cout << "Removing " << v << endl;
+            for (const auto test_dnf : dnfs) {
+              for (const auto var : test_dnf->get_variables()) {
+                assert(var != v);
+              }
+            }
+            removed++;
+          }
+        }
+        cout << "Removed total of: " << removed << endl;
+        if (removed > 0) {
+          cold_storage.push_back(realized_dnf);
+        }
+        if (not raw.is_always_sat()) {
+          add_dnf(std::make_shared<DNF>(raw));
+        }
+        knowledge_propagate();
+      } else {
+        print_short(cout);
+        // Two or more DNFs, so find the two with the fewest rows and merge them
+        auto first = dnfs_with_v.begin()->lock();
+        for (const auto option : dnfs_with_v) {
+          auto real_option = option.lock();
+          if (not first) {
+            first = real_option;
+          } else if (real_option and real_option->get_table().size() < first->get_table().size()) {
+            first = real_option;
+          }
+        }
+        std::shared_ptr<DNF> second;
+        for (const auto option : dnfs_with_v) {
+          auto real_option = option.lock();
+          if (real_option == first) {
+            continue;
+          }
+          if (not second) {
+            second = real_option;
+          } else if (real_option and real_option->get_table().size() < second->get_table().size()) {
+            second = real_option;
+          }
+        }
+        assert(first);
+        assert(second);
+        assert(first != second);
+        if (first->get_table().size() * second->get_table().size() > 10000) {
+          cout << "TOO BIG: " << master_v << " in bin " << i << endl;
+          continue;
+        }
+        found=true;
+        auto weak_result = merge(first, second);
+        knowledge_propagate();
+        if (not weak_result.lock()) {
+          cout << "Function gone!" << endl;
+          continue;
+        }
+        DNF raw = *weak_result.lock();
+        auto realized_dnf = weak_result.lock();
+        remove_dnf(weak_result);
+
+        size_t removed = 0;
+        auto copy_var = raw.get_variables();
+        for (const auto v : copy_var) {
+          if (variable_to_dnfs[v].size() == 0) {
+            raw = raw.without_variable(v);
+            cout << "Removing " << v << endl;
+            for (const auto test_dnf : dnfs) {
+              for (const auto var : test_dnf->get_variables()) {
+                assert(var != v);
+              }
+            }
+
+            removed++;
+          }
+        }
+        //cout << "Removed total of: " << removed << endl;
+        if (removed > 0) {
+          cold_storage.push_back(realized_dnf);
+        }
+
+        if (not raw.is_always_sat()) {
+          if (not raw.create_knowledge().empty()) {
+            cout << "Raw now has knowledg!" << endl;
+            assert(false);
+          }
+          if (removed > 0) {
+            auto order = raw.get_variables();
+            sort(order.begin(), order.end(), [this](const size_t& i, const size_t& j) {
+                 return variable_to_dnfs[i].size() < variable_to_dnfs[j].size();});
+
+            for (const auto& decomp : full_decompose(raw, order)) {
+              add_dnf(std::make_shared<DNF>(decomp));
+            }
+          } else {
+            add_dnf(std::make_shared<DNF>(raw));
+          }
+
+        } else {
+          cout << "Raw became always SAT" << endl;
+        }
+        knowledge_propagate();
+      }
+    }
+  }
+  auto all_dnfs = dnfs;
+  for (const auto dnf : all_dnfs) {
+    auto raw = *dnf;
+    remove_dnf(dnf);
+    auto order = raw.get_variables();
+    sort(order.begin(), order.end(), [this](const size_t& i, const size_t& j) {
+         return variable_to_dnfs[i].size() < variable_to_dnfs[j].size();});
+
+    for (const auto& decomp : full_decompose(raw, order)) {
+      add_dnf(std::make_shared<DNF>(decomp));
+    }
+  }
+  return found;
+}
+
+void Problem::clear_identical() {
+  unordered_map<vector<size_t>, vector<shared_ptr<DNF>>> hashed;
+  for (const auto dnf : dnfs) {
+    auto variables = dnf->get_variables();
+    sort(variables.begin(), variables.end());
+    hashed[variables].push_back(dnf);
+  }
+  for (auto& pair : hashed) {
+    if (pair.second.size() > 1) {
+      cout << "Found identical: " << pair.second.size() << endl;
+      for (const auto dnf : pair.second) {
+        dnf->print();
+      }
+      auto combined = pair.second.back();
+      pair.second.pop_back();
+      while (pair.second.size() > 0) {
+        auto partner = pair.second.back();
+        if (partner->get_table().size() != combined->get_table().size()) {
+          cout << "Identical variables, different rows!" << endl;
+        }
+        pair.second.pop_back();
+        combined = merge(combined, partner).lock();
+      }
+      cout << "Created" << endl;
+      combined->print();
+    }
+  }
+}
+
+bool Problem::break_down() {
+  bool success = false;
+  auto unprocessed = dnfs;
+  while (unprocessed.size() > 0) {
+    auto dnf = *unprocessed.begin();
+    unprocessed.erase(dnf);
+    remove_dnf(dnf);
+    auto order = dnf->get_variables();
+    sort(order.begin(), order.end(), [this](const size_t& i, const size_t& j) {
+         return variable_to_dnfs[i].size() < variable_to_dnfs[j].size();});
+    auto pieces = full_decompose(*dnf, order);
+    success |= (pieces.size() > 1);
+    for (const auto piece : pieces) {
+      if (not piece.is_always_sat()) {
+        auto as_shared = std::make_shared<DNF>(piece);
+        add_dnf(as_shared);
+        if (pieces.size() > 1) {
+          unprocessed.insert(as_shared);
+        }
+      }
+    }
+  }
+  return success;
+}
+
+void Problem::two_to_one() {
+  bool found;
+  do {
+    found = false;
+    for (size_t v=0; v < variable_to_dnfs.size(); v++) {
+      const auto& bin = variable_to_dnfs[v];
+      if (bin.size() == 2) {
+        auto weak_first = *bin.begin();
+        auto weak_second = *(++bin.begin());
+        auto realized_first = weak_first.lock();
+        auto realized_second = weak_second.lock();
+        remove_dnf(weak_first);
+        remove_dnf(weak_second);
+        if (realized_first->get_table().size() * realized_second->get_table().size() > 10000) {
+          // do splits
+          auto split = decompose(*realized_first, v);
+          if (split.size() > 1) {
+            add_dnf(std::make_shared<DNF>(split[1]));
+          }
+          realized_first = std::make_shared<DNF>(split[0]);
+          weak_first = realized_first;
+          split = decompose(*realized_second, v);
+          if (split.size() > 1) {
+            add_dnf(std::make_shared<DNF>(split[1]));
+          }
+          realized_second = std::make_shared<DNF>(split[0]);
+          weak_second = realized_second;
+          if (realized_first->get_table().size() * realized_second->get_table().size() > 10000) {
+            add_dnf(realized_first);
+            add_dnf(realized_second);
+            knowledge_propagate();
+            continue;
+          }
+        }
+        cout << "Creating one from two " << v << endl;
+        auto result = merge(weak_first, weak_second);
+        //auto realized_result = result.lock();
+        //result = assume_and_learn(realized_result);
+        //result = resolve_overlaps(result);
+        knowledge_propagate();
+        if (not result.lock()) {
+          cout << "Function gone!" << endl;
+          found=true;
+          print_short();
+          continue;
+        }
+        DNF raw = *result.lock();
+        cold_storage.push_back(result.lock());
+        remove_dnf(result);
+        size_t removed = 0;
+        auto copy_var = raw.get_variables();
+        for (const auto v : copy_var) {
+          if (variable_to_dnfs[v].size() == 0) {
+            raw = raw.without_variable(v);
+            removed++;
+          }
+        }
+        cout << "Removed total of: " << removed << endl;
+        if (removed == 0) {
+          raw.print();
+          assert(false);
+        }
+
+        if (not raw.is_always_sat()) {
+          if (not raw.create_knowledge().empty()) {
+            cout << "Raw now has knowledg!" << endl;
+            assert(false);
+          }
+          auto order = raw.get_variables();
+          sort(order.begin(), order.end(), [this](const size_t& i, const size_t& j) {
+               return variable_to_dnfs[i].size() < variable_to_dnfs[j].size();});
+
+          for (const auto& decomp : full_decompose(raw, order)) {
+            add_dnf(std::make_shared<DNF>(decomp));
+          }
+        } else {
+          cout << "Raw became always SAT" << endl;
+        }
+        knowledge_propagate();
+        /*
+        if (result.lock()->get_table().size() <= 128) {
+          rf->print();
+          sf->print();
+          result.lock()->print();
+          auto split = decompose(*result.lock(), v);
+          for (const auto s : split) {
+            s.print();
+          }
+          if (split.size() == 1) {
+            throw "STOP";
+          }
+        }
+        */
+        // TODO Remove true subsets
+        //resolve_overlaps(result);
+        found = true;
+        print_short();
+      }
+      if (bin.size() == 1) {
+        found = true;
+        auto weak_dnf = *bin.begin();
+        auto realized_dnf = weak_dnf.lock();
+        assert(realized_dnf);
+        cold_storage.push_back(realized_dnf);
+        remove_dnf(weak_dnf);
+        auto result = realized_dnf->without_variable(v);
+        size_t maximum_size = 1 << result.get_variables().size();
+        if (result.get_table().size() != maximum_size) {
+          add_dnf(std::make_shared<DNF>(result));
+        }
+        knowledge_propagate();
+      }
+    }
+  } while (found);
+
+}
+
 void Problem::equal_variable_assuming() {
   unordered_map<size_t, size_t> variable_tests;
   size_t loops = 0;
   while (not requires_assume_and_learn.empty()) {
     loops++;
-    if (loops > 100) {
+    if (loops > 500) {
       return;
     }
     std::shared_ptr<DNF> realized_dnf;
@@ -574,7 +1121,7 @@ void Problem::equal_variable_assuming() {
     assert(realized_dnf);
     // Do the assume-and-learn
     realized_dnf = assume_and_learn(realized_dnf);
-
+    //realized_dnf = fill_in_stars(realized_dnf);
     // Mark the variables
     for (const auto v : realized_dnf->get_variables()) {
       variable_tests[v]++;
@@ -587,7 +1134,7 @@ void Problem::equal_variable_assuming() {
       add_knowledge(learned);
     }
     std::weak_ptr<DNF> weak = realized_dnf;
-    //realized_dnf = resolve_overlaps(weak).lock();
+    realized_dnf = resolve_overlaps(weak).lock();
     requires_assume_and_learn.erase(realized_dnf);
     print_short();
 
@@ -771,7 +1318,10 @@ void Problem::merge_small_rows(const size_t limit) {
 }
 
 std::shared_ptr<DNF> Problem::fill_in_stars(std::shared_ptr<DNF> realized_dnf) {
-  cout << "Filling in with " << realized_dnf->get_table().size() << " rows" << endl;
+  if (realized_dnf->get_table().size() >= 64) {
+    return realized_dnf;
+  }
+  //cout << "Filling in with " << realized_dnf->get_table().size() << " rows" << endl;
   size_t best_column = -1;
   size_t star_count = -1;
   bool missing_value = false;
@@ -794,7 +1344,7 @@ std::shared_ptr<DNF> Problem::fill_in_stars(std::shared_ptr<DNF> realized_dnf) {
     return realized_dnf;
   }
   auto variable = realized_dnf->get_variables()[best_column];
-  // Find the rows that have either for that column
+  // Find the rows that have EITHER for that column
   auto new_rows = realized_dnf->convert_to_map();
   bool changed = false;
   for (size_t r=0; r < new_rows.size(); r++) {
@@ -804,17 +1354,16 @@ std::shared_ptr<DNF> Problem::fill_in_stars(std::shared_ptr<DNF> realized_dnf) {
       assumption.assigned = new_rows[r];
       assumption.add(variable, missing_value);
       propagate_assumption(assumption);
-
+      new_rows[r][variable] = not missing_value;
       if (not assumption.is_unsat) {
-        cout << "Broke Streak" << endl;
+        //cout << "Broke Streak" << endl;
         // Add the row back in (and its consequences) only if it didn't lead to a contradiction
         new_rows.push_back(assumption.assigned);
         // Found a row that breaks the uniformity, so stop
         changed=true;
         break;
       } else {
-        cout << "Extended streak" << endl;
-        new_rows[r][variable] = not missing_value;
+        //cout << "Extended streak" << endl;
         changed = true;
       }
     }
@@ -822,8 +1371,41 @@ std::shared_ptr<DNF> Problem::fill_in_stars(std::shared_ptr<DNF> realized_dnf) {
   if (changed) {
     realized_dnf = std::make_shared<DNF>(new_rows);
   }
-  cout << "End of fill in stars" << endl;
+  //cout << "End of fill in stars" << endl;
   return fill_in_stars(realized_dnf);
+}
+
+std::shared_ptr<DNF> Problem::smarter_fill(std::shared_ptr<DNF> realized_dnf) {
+  auto new_rows = realized_dnf->convert_to_map();
+  for (size_t col=0; col < realized_dnf->get_variables().size(); col++) {
+    unordered_map<char, size_t> counts;
+    for (const auto & row : realized_dnf->get_table()) {
+      counts[row[col]]++;
+    }
+    if (counts.count(EITHER) == 0 or counts.size() == 3) {
+      continue;
+    }
+    // The column only has 1 setting, and its always the same value
+    auto variable = realized_dnf->get_variables()[col];
+    bool missing_value = counts.count(false);
+    // Find the rows that have EITHER for that column
+    for (size_t r=0; r < new_rows.size(); r++) {
+      if (new_rows[r].count(variable) == 0) {
+        // This row doesn't have a value for this variable
+        Knowledge assumption;
+        assumption.assigned = new_rows[r];
+        assumption.add(variable, missing_value);
+        propagate_assumption(assumption);
+        if (assumption.is_unsat) {
+          cout << "Added" << endl;
+          new_rows[r][variable] = not missing_value;
+        } else {
+          //cout << "Failed" << endl;
+        }
+      }
+    }
+  }
+  return std::make_shared<DNF>(new_rows);
 }
 
 std::shared_ptr<DNF> Problem::assume_and_learn(std::shared_ptr<DNF>& realized_dnf) {
@@ -844,7 +1426,7 @@ std::shared_ptr<DNF> Problem::assume_and_learn(std::shared_ptr<DNF>& realized_dn
     }
     */
     propagate_assumption(assumption);
-    cout << "After assumption assignments: " << assumption.assigned.size() << " " << assumption.is_unsat << endl;
+    //cout << "After assumption assignments: " << assumption.assigned.size() << " " << assumption.is_unsat << endl;
     if (not assumption.is_unsat) {
       // Add the row back in (and its consequences) only if it didn't lead to a contradiction
       new_rows.push_back(assumption.assigned);
@@ -853,7 +1435,11 @@ std::shared_ptr<DNF> Problem::assume_and_learn(std::shared_ptr<DNF>& realized_dn
   }
   auto new_dnf = simple_convert(new_rows);
   //auto new_dnf = std::make_shared<DNF>(new_rows);
-  cout << "After " << new_dnf->get_variables().size() << "x" << new_dnf->get_table().size() << endl;
+  //auto new_dnf = smart_convert(new_rows);
+  //cout << "Middle " << new_dnf->get_variables().size() << "x" << new_dnf->get_table().size() << endl;
+  //new_dnf = smarter_fill(new_dnf);
+  cout << "After  " << new_dnf->get_variables().size() << "x" << new_dnf->get_table().size() << endl;
+  //new_dnf->print();
   // Add it back into the problem
   add_dnf(new_dnf);
   return new_dnf;
@@ -889,11 +1475,11 @@ void Problem::assume_and_learn() {
     //cout << "Good: " << good << " bad: " << bad << endl;
     // Temporarily remove it from the problem (will remove it from requires_assume_and_learn)
     auto new_dnf = assume_and_learn(realized_dnf);
-    cout << "After " << new_dnf->get_variables().size() << "x" << new_dnf->get_table().size() << endl;
-    new_dnf->create_knowledge().print();
-    new_dnf = fill_in_stars(new_dnf);
-    cout << "Third " << new_dnf->get_variables().size() << "x" << new_dnf->get_table().size() << endl;
-    new_dnf->create_knowledge().print();
+    //cout << "After " << new_dnf->get_variables().size() << "x" << new_dnf->get_table().size() << endl;
+    //new_dnf->create_knowledge().print();
+    //new_dnf = fill_in_stars(new_dnf);
+    //cout << "Third " << new_dnf->get_variables().size() << "x" << new_dnf->get_table().size() << endl;
+    //new_dnf->create_knowledge().print();
     if (new_dnf->get_variables().size() == realized_dnf->get_variables().size() and
         new_dnf->get_table().size() == realized_dnf->get_table().size()) {
       bad++;
@@ -930,14 +1516,14 @@ void Problem::assume_and_learn() {
   print_short();
 }
 
-std::weak_ptr<DNF> Problem::merge(std::weak_ptr<DNF>& weak_a, std::weak_ptr<DNF>& weak_b) {
+std::weak_ptr<DNF> Problem::merge(std::weak_ptr<DNF> weak_a, std::weak_ptr<DNF> weak_b) {
   auto realized_a = weak_a.lock();
   auto realized_b = weak_b.lock();
   assert(realized_a and realized_b);
   auto realized_new = std::make_shared<DNF>(DNF::merge(*realized_a, *realized_b));
-  cout << "Merged: " << realized_a->get_table().size()
-       << "+" << realized_b->get_table().size()
-       << "=" << realized_new->get_table().size() << endl;
+  cout << "Merged: " << realized_a->get_variables().size() << "x" << realized_a->get_table().size()
+       << " + " << realized_b->get_variables().size() << "x" << realized_b->get_table().size()
+       << " = " << realized_new->get_variables().size() << "x" << realized_new->get_table().size() << endl;
   //realized_a->print();
   //realized_b->print();
   //realized_new->print();

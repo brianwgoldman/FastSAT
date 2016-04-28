@@ -166,8 +166,13 @@ void Knowledge::print(std::ostream& out) const {
   print_map(assigned, out);
   out << "Two Consistencies: " << rewrites.size() << endl;
   if (rewrites.size() > 0) {
+    vector<size_t> froms;
     for (const auto pair : rewrites) {
-      pair.second.print(out);
+      froms.push_back(pair.first);
+    }
+    sort(froms.begin(), froms.end());
+    for (const auto from : froms) {
+      rewrites.at(from).print(out);
       out << ", ";
     }
     out << endl;
@@ -180,4 +185,147 @@ void TwoConsistency::print(std::ostream& out) const {
     out << "!";
   }
   out << "=" << to;
+}
+
+#include <fstream>
+using std::ifstream;
+using std::ofstream;
+#include <sstream>
+using std::istringstream;
+using std::endl;
+#include <unordered_map>
+using std::unordered_map;
+#include <algorithm>
+using std::max;
+// TODO Remove
+using std::cout;
+void apply_to_cnf(const string in_filename, const Knowledge& knowledge, const string out_filename) {
+  ifstream in(in_filename);
+  string line, word;
+  int literal;
+  vector<vector<int>> clauses;
+  size_t total_variables=0;
+  while (getline(in, line)) {
+    istringstream iss(line);
+    if (line.empty() or line[0] == 'c') {
+      continue;
+    }
+    else if (line[0] == 'p') {
+      // Process the header
+      iss >> word;
+      assert(word == "p");
+      iss >> word;
+      assert(word == "cnf");
+      iss >> total_variables;
+      continue;
+    }
+    // If you got this far, its to process a cnf
+    vector<int> clause;
+    while (iss >> literal) {
+      if (literal != 0) {
+        // If the literal is negated, having a true makes this clause false.
+        clause.push_back(literal);
+      }
+    }
+    vector<int> backup = clause;
+    assert(literal == 0);
+    bool is_sat=false;
+    for (size_t i=0; i < clause.size(); i++) {
+      size_t variable = abs(clause[i]);
+      bool is_true = clause[i] > 0;
+      // See if this variable has been assigned
+      auto assigned = knowledge.assigned.find(variable);
+      auto rewritten = knowledge.rewrites.find(variable);
+      if (assigned != knowledge.assigned.end()) {
+        if (is_true == assigned->second) {
+          is_sat = true;
+          break;
+        } else {
+          // Swap it to the end and remove it
+          std::swap(clause[i], clause.back());
+          clause.pop_back();
+          i--;
+        }
+      } else if (rewritten != knowledge.rewrites.end()) {
+        bool has_both = false;
+        for (size_t c=0; c < clause.size(); c++) {
+          if (static_cast<size_t>(abs(clause[c])) == rewritten->second.to) {
+            has_both = true;
+            bool negated = is_true != (clause[c] > 0);
+            if (negated != rewritten->second.negated) {
+              is_sat = true;
+              break;
+            }
+            break;
+          }
+        }
+        if (not has_both) {
+          clause[i] = rewritten->second.to;
+          if (is_true == rewritten->second.negated) {
+            clause[i] = -clause[i];
+          }
+        } else {
+          std::swap(clause[i], clause.back());
+          clause.pop_back();
+          i--;
+        }
+      }
+    }
+    if (not is_sat) {
+      clauses.push_back(clause);
+      for (const auto l : clause) {
+        assert(static_cast<size_t>(abs(l)) <= total_variables);
+      }
+      if (clause.size() == 1) {
+        knowledge.print();
+        cout << "Created UNIT" << endl;
+        for (const auto l : backup) {
+          cout << l << " ";
+        }
+        cout << endl;
+        for (const auto l : clause) {
+          cout << l << " ";
+        }
+        cout << endl;
+        throw "STOP";
+      }
+    }
+  }
+  /*
+  // Put in all of the assignments and 2-consistencies
+  for (const auto pair : knowledge.assigned) {
+    if (pair.first > total_variables) {
+      std::cout << "Assigned DNF auxilary variable" << std::endl;
+      continue;
+    }
+    int literal = pair.first;
+    if (not pair.second) {
+      literal = -literal;
+    }
+    clauses.push_back({literal});
+  }
+  for (const auto pair : knowledge.rewrites) {
+    if (pair.first > total_variables or pair.second.to > total_variables) {
+      std::cout << "Rewrote from/to DNF auxilary variable" << std::endl;
+      continue;
+    }
+    int from = pair.second.from;
+    int to = pair.second.to;
+    if (pair.second.negated) {
+      to = -to;
+    }
+    clauses.push_back({from, -to});
+    clauses.push_back({-from, to});
+  }
+  */
+
+  ofstream out(out_filename);
+  out << "c Post reductions" << endl;
+  out << "p cnf " << total_variables << " " << clauses.size() << endl;
+  for (const auto clause : clauses) {
+    for (const auto l : clause) {
+      out << l << " ";
+    }
+    out << "0" << endl;
+  }
 }
