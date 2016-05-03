@@ -777,7 +777,12 @@ void Problem::clear_identical() {
 bool Problem::break_down() {
   bool success = false;
   auto unprocessed = dnfs;
+  size_t loop = 0;
   while (unprocessed.size() > 0) {
+    loop++;
+    if (loop % 1000 == 0) {
+      cout << "Completed " << loop << " loops of breakdown" << endl;
+    }
     // Select an unprocessed dnf
     auto dnf = *unprocessed.begin();
     unprocessed.erase(dnf);
