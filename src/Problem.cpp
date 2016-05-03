@@ -1215,8 +1215,9 @@ void Problem::convert_to_dimacs(const string filename) const {
     }
     final_clauses.push_back(pair.first);
     for (const auto v :pair.first) {
-      if (final_variables < static_cast<size_t>(abs(v))) {
-        final_variables = v;
+      auto variable = static_cast<size_t>(abs(v));
+      if (final_variables < variable) {
+        final_variables = variable;
       }
     }
   }
