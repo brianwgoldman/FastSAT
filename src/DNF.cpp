@@ -34,6 +34,8 @@ DNF::DNF(const vector<unordered_map<size_t, bool>>& rows) {
   }
 }
 
+const string DNF::Printable_Value="01*";
+
 void DNF::print(std::ostream& out) const {
   if (variables.size() == 0) {
     out << "(Empty DNF)" << endl;
@@ -43,10 +45,9 @@ void DNF::print(std::ostream& out) const {
     out << var << " ";
   }
   out << endl;
-  char lookup[] = {'0', '1', '*'};
   for (const auto& row : table) {
     for (const auto bit : row) {
-      out << lookup[static_cast<size_t>(bit)] << " ";
+      out << Printable_Value[static_cast<size_t>(bit)] << " ";
     }
     out << endl;
   }
@@ -82,7 +83,6 @@ Knowledge DNF::create_knowledge() const {
       complete_column.push_back(c);
     }
   }
-
 
   const size_t total_complete = complete_column.size();
   for (size_t i=0; i < total_complete; i++) {
@@ -323,4 +323,47 @@ bool DNF::is_always_sat() const {
   // but I assume you never have more than a billion rows
   size_t maximum_rows = 1<<variables.size();
   return table.size() == maximum_rows and table.size() > 0;
+}
+
+vector<char> number_to_row(size_t number, const size_t number_of_variables) {
+  // Add a row to the table
+  vector<char> row(number_of_variables);
+  for (size_t i=0; i < number_of_variables; i++) {
+    // Finds the bit value of "position" at i
+    row[i] = ((number >> i) & 1);
+  }
+  return row;
+}
+
+vector<vector<int>> DNF::convert_to_cnfs() const {
+  // TODO make this work with "EITHER", also be less dumb
+  unordered_set<vector<char>> true_rows(table.begin(), table.end());
+  const size_t total_variables = variables.size();
+  size_t limit = 1 << total_variables;
+  vector<vector<int>> result;
+
+  // New order specifies the order indices in "variables" need to be to be sorted
+  vector<size_t> new_order(total_variables);
+  iota(new_order.begin(), new_order.end(), 0);
+  sort(new_order.begin(), new_order.end(), [this](const size_t i, const size_t j) {
+    return variables[i] < variables[j];
+  });
+
+  for (size_t number=0; number < limit; number++) {
+    auto row = number_to_row(number, total_variables);
+    if (true_rows.count(row) == 0) {
+      // The row represents a "false" in the truth table
+      // Create a clause opposite this value
+      result.emplace_back();
+      for (const auto index : new_order) {
+        // If the row was positive, the CNF has it negative
+        if (row[index]) {
+          result.back().push_back(-variables[index]);
+        } else {
+          result.back().push_back(variables[index]);
+        }
+      }
+    }
+  }
+  return result;
 }

@@ -49,72 +49,27 @@ int main(int argc, char * argv[]) {
   cout << "Problem load complete" << endl;
   problem.knowledge_propagate();
   problem.sanity_check();
-  problem.global_knowledge.print();
   problem.print_short(std::cout);
   cout << "Finished normal propagate" << endl;
-  problem.print_short(std::cout);
-  /*
-  cout << "Two-to-one begin" << endl;
-  problem.two_to_one();
-  cout << "Two-to-one done" << endl;
-  //*/
-
-  while (problem.make_singles()) {
-    problem.print_short();
-    break;
-  }
-  cout << "Starting assume-and-learn" << endl;
-//  problem.equal_variable_assuming();
-  cout << "Ending assume and learn, brining out of cold storage" << endl;
-
-  /*
-  for (const auto dnf : problem.cold_storage) {
-    problem.add_dnf(dnf);
-  }
-  problem.cold_storage.clear();
-  //*/
-  return 0;
-  problem.break_down();
+  problem.make_singles();
   problem.print_short();
+  cout << "Make Singles complete" << endl;
+  problem.break_down();
   problem.clear_identical();
   problem.print_short();
-  problem.knowledge_propagate();
+  cout << "Finished breakdown" << endl;
   unordered_map<size_t, size_t> frequencies;
   for (const auto bin : problem.variable_to_dnfs) {
     frequencies[bin.size()]++;
   }
+  cout << "Frequency of variables: ";
   print_map(frequencies, cout);
-
-  std::ofstream out("temp.txt");
   unordered_map<size_t, size_t> function_sizes;
-  problem.print(out);
-  /*
-  for (const auto dnf : problem.dnfs) {
-    dnf->print_short(out);
-  }
-  */
-  out << "Begin cold storage" << endl;
-  for (const auto dnf : problem.cold_storage) {
-    dnf->print(out);
-  }
-  out << "Begin problem knowledge" << endl;
-  problem.global_knowledge.print(out);
   for (const auto dnf : problem.dnfs) {
     function_sizes[dnf->get_table().size()]++;
   }
+  cout << "Frequency of number-of-rows: ";
   print_map(function_sizes, cout);
-  problem.print_short(cout);
-  problem.knowledge_propagate();
-  problem.print_short(cout);
-  return 0;
-  for (size_t i=0; problem.dnfs.size() > 0 and i < 1000; i++) {
-    heuristic_merge(problem);
-    problem.knowledge_propagate();
-    problem.assume_and_learn();
-  }
-  //problem.sanity_check();
-  cout << "Finished merge+assume-and-learn" << endl;
-  problem.global_knowledge.print();
-  problem.print();
+  problem.convert_to_dimacs("temp.dimacs");
   return 0;
 }

@@ -39,6 +39,8 @@ class DNF {
   static DNF merge(const DNF& a, const DNF& b);
   DNF without_variable(const size_t variable) const;
   bool is_always_sat() const;
+  vector<vector<int>> convert_to_cnfs() const;
+  static const string Printable_Value;
  private:
   vector<size_t> variables;
   vector<vector<char>> table;
@@ -47,5 +49,7 @@ class DNF {
 
 vector<unordered_map<size_t, bool>> map_merge(vector<unordered_map<size_t, bool>>& a, vector<unordered_map<size_t, bool>>& b);
 bool no_growth_map_merge(vector<unordered_map<size_t, bool>>& a, vector<unordered_map<size_t, bool>>& b, vector<unordered_map<size_t, bool>>& result);
+
+vector<char> number_to_row(size_t number, const size_t number_of_variables);
 
 #endif /* DNF_H_ */

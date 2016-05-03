@@ -28,9 +28,6 @@ class Problem {
 
   void knowledge_propagate();
   void propagate_assumption(Knowledge& assumption);
-  void two_to_one();
-  bool reduce_bins();
-  vector<std::shared_ptr<DNF>> cold_storage;
   void assume_and_learn();
 
   void merge_small_rows(const size_t limit);
@@ -39,6 +36,7 @@ class Problem {
   bool break_down();
   void clear_identical();
   bool extract_variable(size_t variable);
+  void convert_to_dimacs(const string filename) const;
   std::weak_ptr<DNF> merge(std::weak_ptr<DNF> weak_a, std::weak_ptr<DNF> weak_b);
 
   // TODO most of these things should probably be private
@@ -47,6 +45,9 @@ class Problem {
   weak_dnf_set requires_knowledge_propagate;
   weak_dnf_set requires_assume_and_learn;
   Knowledge global_knowledge;
+  vector<std::shared_ptr<DNF>> cold_storage;
+
+
   void sanity_check();
   std::shared_ptr<DNF> assume_and_learn(std::shared_ptr<DNF>& realized_dnf);
   void scan_variables();
@@ -64,7 +65,7 @@ class Problem {
   void remove_dnf(std::weak_ptr<DNF> weak_dnf);
   void clean_up_bins(const unordered_set<size_t>& require_updating);
 
-  //std::shared_ptr<DNF> simple_convert(vector<std::unordered_map<size_t, bool>>& rows);
+  static std::shared_ptr<DNF> simple_convert(vector<std::unordered_map<size_t, bool>>& rows);
   std::shared_ptr<DNF> old_convert(vector<std::unordered_map<size_t, bool>>& rows);
   std::shared_ptr<DNF> smart_convert(vector<std::unordered_map<size_t, bool>>& rows);
   size_t total_variables;
