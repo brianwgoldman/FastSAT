@@ -319,6 +319,9 @@ DNF DNF::without_variable(const size_t target_variable) const {
 }
 
 bool DNF::is_always_sat() const {
+  if (table.size() == 0 or variables.size() > 31) {
+    return false;
+  }
   // TODO Technically this fails if variables > 31
   // but I assume you never have more than a billion rows
   size_t maximum_rows = 1<<variables.size();

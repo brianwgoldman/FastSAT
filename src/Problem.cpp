@@ -334,9 +334,7 @@ void Problem::clean_up_bins(const unordered_set<size_t>& update_required) {
       // TODO FIX THIS
       continue;
     }
-    size_t dnf_variables = realized_dnf->get_variables().size();
-    size_t maximum_rows = 1 << dnf_variables;
-    if (dnf_variables == 0 or realized_dnf->get_table().size() == maximum_rows) {
+    if (realized_dnf->is_always_sat()) {
       // Remove this function entirely from this problem as it is always satisfied
       remove_dnf(weak_dnf);
     } else {
