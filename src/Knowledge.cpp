@@ -277,7 +277,15 @@ void apply_to_cnf(const string in_filename, const Knowledge& knowledge, const st
         assert(static_cast<size_t>(abs(l)) <= total_variables);
       }
       if (clause.size() == 1) {
-        knowledge.print();
+        for (const auto l : backup) {
+          size_t as_var = abs(l);
+          if (knowledge.assigned.count(as_var)) {
+            cout << "Assigned " << l << " to " << knowledge.assigned.at(as_var) << endl;
+          } else if (knowledge.rewrites.count(as_var)) {
+            cout << "Rewrote: " << l << " using ";
+            knowledge.rewrites.at(as_var).print(cout);
+          }
+        }
         cout << "Created UNIT" << endl;
         for (const auto l : backup) {
           cout << l << " ";
@@ -320,7 +328,7 @@ void apply_to_cnf(const string in_filename, const Knowledge& knowledge, const st
   */
 
   ofstream out(out_filename);
-  out << "c Post reductions" << endl;
+  out << "c Post reductions of " << in_filename << endl;
   out << "p cnf " << total_variables << " " << clauses.size() << endl;
   for (const auto clause : clauses) {
     for (const auto l : clause) {

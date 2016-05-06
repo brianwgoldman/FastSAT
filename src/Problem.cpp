@@ -701,7 +701,6 @@ bool Problem::extract_variable(size_t variable) {
       add_dnf(dnf);
       // Assume they've already done this
       requires_knowledge_propagate.erase(dnf);
-      requires_assume_and_learn.erase(dnf);
     }
     return false;
   }
