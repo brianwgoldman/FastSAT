@@ -71,7 +71,12 @@ void Problem::load_dnf(const string& filename) {
     if (line[0] == '*') {
       table.clear();
       // Throw away the "******* Big integer:"
-      iss >> word >> word >> word;
+      iss >> word >> word;
+      if (word == "CNF") {
+        // TODO Move CNFs part of the problem
+        break;
+      }
+      iss >> word;
       uint64_t big_int;
       iss >> big_int;
       // Throw away the ", Block size = "
@@ -494,7 +499,7 @@ std::shared_ptr<DNF> Problem::smart_convert(vector<unordered_map<size_t, bool>>&
 
 std::weak_ptr<DNF> Problem::resolve_overlaps(std::weak_ptr<DNF>& weak_dnf) {
   //assert(false);
-  //return weak_dnf;
+  return weak_dnf;
   auto realized_dnf = weak_dnf.lock();
   // TODO remove this
   if (not realized_dnf) {
@@ -754,19 +759,18 @@ void Problem::clear_identical() {
   }
   for (auto& pair : hashed) {
     if (pair.second.size() > 1) {
-      cout << "Found identical: " << pair.second.size() << endl;
+      //cout << "Found identical: " << pair.second.size() << endl;
       auto combined = pair.second.back();
+      size_t starting_rows = combined->get_table().size();
       pair.second.pop_back();
       while (pair.second.size() > 0) {
         auto partner = pair.second.back();
-        if (partner->get_table().size() != combined->get_table().size()) {
-          cout << "Identical variables, different rows!" << endl;
-        }
         pair.second.pop_back();
         combined = merge(combined, partner).lock();
       }
-      cout << "Created" << endl;
-      combined->print_short();
+      if (combined->get_table().size() != starting_rows) {
+        cout << "Changed rows by merging identical: " << combined->get_table().size() <<  " " << starting_rows << endl;
+      }
     }
   }
 }
@@ -1003,8 +1007,8 @@ std::shared_ptr<DNF> Problem::assume_and_learn(std::shared_ptr<DNF>& realized_dn
 
     }
   }
-  auto new_dnf = simple_convert(new_rows);
-  //auto new_dnf = std::make_shared<DNF>(new_rows);
+  //auto new_dnf = simple_convert(new_rows);
+  auto new_dnf = std::make_shared<DNF>(new_rows);
   //auto new_dnf = smart_convert(new_rows);
   //cout << "Middle " << new_dnf->get_variables().size() << "x" << new_dnf->get_table().size() << endl;
   //new_dnf = smarter_fill(new_dnf);
