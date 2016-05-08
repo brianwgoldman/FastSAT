@@ -205,6 +205,7 @@ void apply_to_cnf(const string in_filename, const Knowledge& knowledge, const st
   int literal;
   vector<vector<int>> clauses;
   size_t total_variables=0;
+  size_t unpropagated_units=0;
   while (getline(in, line)) {
     istringstream iss(line);
     if (line.empty() or line[0] == 'c') {
@@ -295,7 +296,7 @@ void apply_to_cnf(const string in_filename, const Knowledge& knowledge, const st
           cout << l << " ";
         }
         cout << endl;
-        throw "STOP";
+        unpropagated_units++;
       }
     }
   }
@@ -329,6 +330,8 @@ void apply_to_cnf(const string in_filename, const Knowledge& knowledge, const st
 
   ofstream out(out_filename);
   out << "c Post reductions of " << in_filename << endl;
+  out << "c Assigned: " << knowledge.assigned.size() << " Rewritten: " << knowledge.rewrites.size() << endl;
+  out << "c Unpropagated units: " << unpropagated_units << endl;
   out << "p cnf " << total_variables << " " << clauses.size() << endl;
   for (const auto clause : clauses) {
     for (const auto l : clause) {
